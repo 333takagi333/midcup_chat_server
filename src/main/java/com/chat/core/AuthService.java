@@ -10,7 +10,6 @@ import java.sql.SQLException;
 
 public class AuthService {
 
-    // 认证用户：根据用户名查询并校验密码（演示用，未做密码加密）
     public boolean authenticate(LoginPayload loginPayload) {
         String sql = "SELECT password_hash, salt FROM auth WHERE username = ?";
         try (Connection conn = DatabaseManager.getConnection();
@@ -26,7 +25,10 @@ public class AuthService {
             }
         } catch (SQLException e) {
             System.err.println("[AUTH] SQL error: " + e.getMessage());
+            e.printStackTrace();
         }
         return false;
     }
+
+
 }

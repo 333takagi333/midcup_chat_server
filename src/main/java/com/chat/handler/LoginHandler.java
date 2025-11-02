@@ -1,32 +1,54 @@
 package com.chat.handler;
 
 import com.chat.core.AuthService;
-import com.chat.model.LoginPayload;
-import com.chat.model.Request;
-import com.chat.model.Response;
+import com.chat.protocol.LoginRequest;
+import com.chat.protocol.LoginResponse;
+import com.chat.protocol.MessageType;
 
 public class LoginHandler {
 
-    public Response handle(Request<LoginPayload> request) {
-        if (request.getPayload() == null) {
-            return new Response("ERROR", "Empty payload");
+    /**
+     * 处理登录（协议：login_request）
+     * 入参：LoginRequest（username/password）
+     * 返回：LoginResponse（type=login_response, uid/success/message）
+     */
+    public LoginResponse handle(LoginRequest loginRequest) {
+        LoginResponse resp = new LoginResponse();
+        resp.setType(MessageType.LOGIN_RESPONSE);
+
+        if (loginRequest == null) {
+            resp.setUid(null);
+            resp.setSuccess(false);
+            resp.setMessage("Empty payload");
+            return resp;
         }
 
-        LoginPayload p = request.getPayload();
+        String username = loginRequest.getUsername();
+        String password = loginRequest.getPassword();
+
         AuthService auth = new AuthService();
-        boolean ok = false;
+        Long uid = null;
         try {
-            ok = auth.authenticate(p);
+            uid = auth.authenticateAndGetUid(username, password);
         } catch (Exception ex) {
             System.err.println("[AUTH] DB error: " + ex.getMessage());
             ex.printStackTrace();
         }
 
-        System.out.println("用户 " + p.getUsername() + "，密码 " + p.getPassword()
-                + "，登录" + (ok ? "成功" : "失败"));
+        boolean ok = uid != null;
+        System.out.println("用户 " + username + " 登录" + (ok ? "成功" : "失败"));
 
-        return ok
-                ? new Response("SUCCESS", "Login successful")
-                : new Response("ERROR", "Invalid username or password");
+        if (ok) {
+            resp.setUid(String.valueOf(uid));
+            resp.setSuccess(true);
+            resp.setMessage("Welcome, " + username);
+            resp.setTimestamp(System.currentTimeMillis());
+        } else {
+            resp.setUid(null);
+            resp.setSuccess(false);
+            resp.setMessage("Invalid username or password");
+            resp.setTimestamp(System.currentTimeMillis());
+        }
+        return resp;
     }
 }

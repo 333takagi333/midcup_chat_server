@@ -1,11 +1,11 @@
 package com.chat.handler;
 
 import com.chat.core.AuthService;
-import com.chat.model.*;
 import com.chat.utils.OnlineUserManager;
+import com.chat.protocol.*;
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
-import com.google.gson.reflect.TypeToken;
 
 import java.io.*;
 import java.net.Socket;
@@ -16,7 +16,7 @@ public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final Gson gson = new Gson();
-    private String currentUser = null;
+    private String currentUser = null; // 仍以用户名维护在线表
     private PrintWriter out;  // 缓存，便于推送
 
     public ClientHandler(Socket socket) {
@@ -36,51 +36,38 @@ public class ClientHandler implements Runnable {
                 System.out.println("[HANDLER] Received from client: " + line);
 
                 try {
-                    Request<?> raw = gson.fromJson(line, new TypeToken<Request<?>>() {}.getType());
-                    if (raw == null || raw.getType() == null) {
-                        sendError("Invalid request");
+                    JsonObject root = gson.fromJson(line, JsonObject.class);
+                    if (root == null || !root.has("type")) {
+                        // 协议必须包含 type
                         continue;
                     }
+                    String type = root.get("type").getAsString();
 
-                    Response response;
-                    switch (raw.getType()) {
-                        case "LOGIN" -> {
-                            Request<LoginPayload> loginReq = gson.fromJson(line,
-                                    new TypeToken<Request<LoginPayload>>() {}.getType());
-                            response = handleLogin(loginReq);
-                            if ("SUCCESS".equals(response.getStatus())) {
-                                currentUser = loginReq.getPayload().getUsername();
-                                OnlineUserManager.addUser(currentUser, out);  // 注册在线
-                                System.out.println("用户 " + currentUser + " 登录成功，保持连接...");
-                            } else {
-                                out.println(gson.toJson(response));
-                                return; // 登录失败，关闭
-                            }
+                    switch (type) {
+                        case MessageType.LOGIN_REQUEST -> {
+                            LoginRequest loginReq = gson.fromJson(line, LoginRequest.class);
+                            handleLogin(loginReq);
                         }
-                        case "CHAT" -> {
+                        case MessageType.CHAT_PRIVATE_SEND -> {
                             if (currentUser == null) {
-                                response = new Response("ERROR", "Not logged in");
-                            } else {
-                                Request<ChatMessage> chatReq = gson.fromJson(line,
-                                        new TypeToken<Request<ChatMessage>>() {}.getType());
-                                if (chatReq.getPayload() != null) {
-                                    chatReq.getPayload().setFrom(currentUser);  // 自动填充
-                                }
-                                response = new ChatHandler().handle(chatReq);
+                                // 未登录，忽略
+                                break;
                             }
+                            ChatPrivateSend cps = gson.fromJson(line, ChatPrivateSend.class);
+                            // 规范：以服务器记录的当前用户为准，防止伪造
+                            cps.setFrom(currentUser);
+                            handlePrivateChat(cps);
                         }
-                        default -> response = new Response("ERROR", "Unsupported type: " + raw.getType());
+                        default -> {
+                            System.out.println("[WARN] Unsupported type: " + type);
+                        }
                     }
-
-                    out.println(gson.toJson(response));
-
                 } catch (JsonSyntaxException e) {
                     fallbackLog(line);
-                    sendError("Invalid JSON");
+                    // 无效 JSON，忽略本条
                 } catch (Exception e) {
                     System.err.println("Handler error: " + e.getMessage());
                     e.printStackTrace();
-                    sendError("Server error");
                     break;
                 }
             }
@@ -92,44 +79,71 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private Response handleLogin(Request<LoginPayload> request) {
-        if (request.getPayload() == null) {
-            return new Response("ERROR", "Empty payload");
+    private void handleLogin(LoginRequest loginRequest) {
+        if (loginRequest == null) {
+            sendLoginResponse(null, false, "Empty payload");
+            return;
         }
 
-        LoginPayload p = request.getPayload();
+        String username = loginRequest.getUsername();
+        String password = loginRequest.getPassword();
+
         AuthService auth = new AuthService();
-        boolean ok = false;
+        Long uid = null;
         try {
-            ok = auth.authenticate(p);
+            uid = auth.authenticateAndGetUid(username, password);
         } catch (Exception ex) {
             System.err.println("[AUTH] DB error: " + ex.getMessage());
             ex.printStackTrace();
         }
 
-        System.out.println("用户 " + p.getUsername() + "，密码 " + p.getPassword()
-                + "，登录" + (ok ? "成功" : "失败"));
+        boolean ok = uid != null;
+        // 避免记录明文密码
+        System.out.println("用户 " + username + " 登录" + (ok ? "成功" : "失败"));
 
-        return ok
-                ? new Response("SUCCESS", "Login successful")
-                : new Response("ERROR", "Invalid username or password");
+        if (ok) {
+            currentUser = username; // 以用户名维持会话
+            OnlineUserManager.addUser(currentUser, out);  // 注册在线
+            System.out.println("用户 " + currentUser + " 登录成功，保持连接...");
+            // 返回数据库 uid
+            sendLoginResponse(String.valueOf(uid), true, "Welcome, " + currentUser);
+        } else {
+            sendLoginResponse(null, false, "Invalid username or password");
+            // 登录失败后关闭连接
+            try {
+                clientSocket.close();
+            } catch (IOException ignored) {}
+        }
     }
 
-    private void sendError(String msg) {
+    private void handlePrivateChat(ChatPrivateSend cps) {
+        if (cps == null) return;
+        // 将具体处理委托给 ChatHandler，统一落库与推送逻辑
+        new ChatHandler().handle(cps);
+    }
+
+    private void sendLoginResponse(String uid, boolean success, String message) {
+        LoginResponse resp = new LoginResponse();
+        resp.setType(MessageType.LOGIN_RESPONSE);
+        resp.setUid(uid);
+        resp.setSuccess(success);
+        resp.setMessage(message);
+        resp.setTimestamp(System.currentTimeMillis());
+        sendJson(resp);
+    }
+
+    private void sendJson(Object obj) {
         if (out != null && !out.checkError()) {
-            out.println(gson.toJson(new Response("ERROR", msg)));
+            out.println(gson.toJson(obj));
         }
     }
 
     private void fallbackLog(String line) {
         try {
             Pattern pu = Pattern.compile("\"username\"\\s*:\\s*\"([^\"]*)\"");
-            Pattern pp = Pattern.compile("\"password\"\\s*:\\s*\"([^\"]*)\"");
             Matcher mu = pu.matcher(line);
-            Matcher mp = pp.matcher(line);
             String u = mu.find() ? mu.group(1) : "?";
-            String p = mp.find() ? mp.group(1) : "?";
-            System.out.println("[FALLBACK] 用户 " + u + "，密码 " + p + "，登录失败（JSON无效）");
+            System.out.println("[FALLBACK] 用户 " + u + " 登录失败(JSON无效)");
         } catch (Throwable ignored) {}
     }
 

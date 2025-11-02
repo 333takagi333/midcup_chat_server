@@ -1,27 +1,22 @@
 package com.chat.model;
 
-// 通用请求封装：包含类型与数据载荷
+import com.google.gson.annotations.SerializedName;
+
 public class Request<T> {
     private String type;
+
+    @SerializedName("data")          // 注意这里是 data
     private T payload;
 
-    // 获取请求类型
-    public String getType() {
-        return type;
-    }
+    private long timestamp;
 
-    // 获取请求载荷
-    public T getPayload() {
-        return payload;
-    }
+    // ----- getters & setters -----
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
 
-    // 设置请求类型
-    public void setType(String type) {
-        this.type = type;
-    }
+    public T getPayload() { return payload; }
+    public void setPayload(T payload) { this.payload = payload; }
 
-    // 设置请求载荷
-    public void setPayload(T payload) {
-        this.payload = payload;
-    }
+    public long getTimestamp() { return timestamp; }
+    public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
 }

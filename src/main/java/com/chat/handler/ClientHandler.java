@@ -16,7 +16,7 @@ public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final Gson gson = new Gson();
-    private String currentUser = null; // 仍以用户名维护在线表
+    private Long currentUid = null; // 以 UID 维护在线表，符合协议与 OnlineUserManager
     private PrintWriter out;  // 缓存，便于推送
 
     public ClientHandler(Socket socket) {
@@ -49,18 +49,16 @@ public class ClientHandler implements Runnable {
                             handleLogin(loginReq);
                         }
                         case MessageType.CHAT_PRIVATE_SEND -> {
-                            if (currentUser == null) {
+                            if (currentUid == null) {
                                 // 未登录，忽略
                                 break;
                             }
                             ChatPrivateSend cps = gson.fromJson(line, ChatPrivateSend.class);
                             // 规范：以服务器记录的当前用户为准，防止伪造
-                            cps.setFrom(currentUser);
+                            cps.setFromUserId(currentUid);
                             handlePrivateChat(cps);
                         }
-                        default -> {
-                            System.out.println("[WARN] Unsupported type: " + type);
-                        }
+                        default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
                 } catch (JsonSyntaxException e) {
                     fallbackLog(line);
@@ -102,11 +100,11 @@ public class ClientHandler implements Runnable {
         System.out.println("用户 " + username + " 登录" + (ok ? "成功" : "失败"));
 
         if (ok) {
-            currentUser = username; // 以用户名维持会话
-            OnlineUserManager.addUser(currentUser, out);  // 注册在线
-            System.out.println("用户 " + currentUser + " 登录成功，保持连接...");
+            currentUid = uid; // 以 uid 维持会话
+            OnlineUserManager.addUser(currentUid, out);  // 注册在线
+            System.out.println("用户UID " + currentUid + " 登录成功，保持连接...");
             // 返回数据库 uid
-            sendLoginResponse(String.valueOf(uid), true, "Welcome, " + currentUser);
+            sendLoginResponse(String.valueOf(uid), true, "Welcome, " + username);
         } else {
             sendLoginResponse(null, false, "Invalid username or password");
             // 登录失败后关闭连接
@@ -148,9 +146,9 @@ public class ClientHandler implements Runnable {
     }
 
     private void cleanup() {
-        if (currentUser != null) {
-            OnlineUserManager.removeUser(currentUser);
-            System.out.println("[ONLINE] 用户 " + currentUser + " 已下线");
+        if (currentUid != null) {
+            OnlineUserManager.removeUser(currentUid);
+            System.out.println("[ONLINE] 用户UID " + currentUid + " 已下线");
         }
         try {
             if (!clientSocket.isClosed()) {

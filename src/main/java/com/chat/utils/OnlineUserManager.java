@@ -10,27 +10,27 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class OnlineUserManager {
 
-    // username -> PrintWriter (用于向客户端写数据)
-    private static final Map<String, PrintWriter> onlineUsers = new ConcurrentHashMap<>();
+    // uid -> PrintWriter (用于向客户端写数据)
+    private static final Map<Long, PrintWriter> onlineUsers = new ConcurrentHashMap<>();
 
     /**
      * 用户上线
      */
-    public static void addUser(String username, PrintWriter out) {
-        if (username != null && out != null) {
-            onlineUsers.put(username, out);
-            System.out.println("[ONLINE] 用户 " + username + " 上线，当前在线人数: " + onlineUsers.size());
+    public static void addUser(Long uid, PrintWriter out) {
+        if (uid != null && out != null) {
+            onlineUsers.put(uid, out);
+            System.out.println("[ONLINE] 用户UID " + uid + " 上线，当前在线人数: " + onlineUsers.size());
         }
     }
 
     /**
      * 用户下线
      */
-    public static void removeUser(String username) {
-        if (username != null) {
-            PrintWriter removed = onlineUsers.remove(username);
+    public static void removeUser(Long uid) {
+        if (uid != null) {
+            PrintWriter removed = onlineUsers.remove(uid);
             if (removed != null) {
-                System.out.println("[ONLINE] 用户 " + username + " 下线，当前在线人数: " + onlineUsers.size());
+                System.out.println("[ONLINE] 用户UID " + uid + " 下线，当前在线人数: " + onlineUsers.size());
             }
         }
     }
@@ -38,9 +38,9 @@ public class OnlineUserManager {
     /**
      * 获取用户的输出流（用于推送）
      */
-    public static PrintWriter getUserOutput(String username) {
-        if (username == null) return null;
-        PrintWriter out = onlineUsers.get(username);
+    public static PrintWriter getUserOutput(Long uid) {
+        if (uid == null) return null;
+        PrintWriter out = onlineUsers.get(uid);
         // 检查连接是否有效
         return (out != null && !out.checkError()) ? out : null;
     }
@@ -48,8 +48,8 @@ public class OnlineUserManager {
     /**
      * 判断用户是否在线
      */
-    public static boolean isOnline(String username) {
-        return username != null && onlineUsers.containsKey(username);
+    public static boolean isOnline(Long uid) {
+        return uid != null && onlineUsers.containsKey(uid);
     }
 
     /**

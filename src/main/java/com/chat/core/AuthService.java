@@ -24,7 +24,7 @@ public class AuthService {
             return null;
         }
 
-        String sql = "SELECT uid, password_hash, salt FROM auth WHERE username = ?";
+        String sql = "SELECT uid, password_hash, salt FROM user_auth WHERE username = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, username);

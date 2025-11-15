@@ -9,15 +9,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.UUID;
 
+/**
+ * 认证服务 - 处理用户登录、注册、密码重置等
+ */
 public class AuthService {
 
     /**
-     * 验证用户名和密码，成功则返回用户 uid，失败返回 null。
-     * 支持以下校验策略：
-     * 1) password_hash 与明文密码完全相等（开发环境兜底）
-     * 2) password_hash == SHA-256(salt + password)
-     * 3) password_hash == SHA-256(password + salt)
+     * 用户认证并获取UID
      */
     public Long authenticateAndGetUid(String username, String password) {
         if (username == null || password == null) {
@@ -58,10 +58,95 @@ public class AuthService {
     }
 
     /**
-     * 兼容旧接口：仅返回是否认证通过。
+     * 用户注册
      */
-    public boolean authenticate(String username, String password) {
-        return authenticateAndGetUid(username, password) != null;
+    public boolean registerUser(String username, String password) {
+        if (username == null || password == null || username.length() < 3 || password.length() < 6) {
+            return false;
+        }
+
+        // 检查用户名是否已存在
+        if (checkUserExists(username)) {
+            return false;
+        }
+
+        String salt = generateSalt();
+        String passwordHash = sha256Hex(password + salt); // 使用密码+盐的方式
+        String recoveryCode = UUID.randomUUID().toString().substring(0, 8);
+
+        String sql = "INSERT INTO user_auth (username, password_hash, salt, recovery_code) VALUES (?, ?, ?, ?)";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, username);
+            stmt.setString(2, passwordHash);
+            stmt.setString(3, salt);
+            stmt.setString(4, recoveryCode);
+
+            int affected = stmt.executeUpdate();
+            return affected > 0;
+        } catch (SQLException e) {
+            System.err.println("[REGISTER] SQL error: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * 重置密码
+     */
+    public boolean resetPassword(String recoveryCode, String newPassword) {
+        if (recoveryCode == null || newPassword == null || newPassword.length() < 6) {
+            return false;
+        }
+
+        String sql = "SELECT uid, salt FROM user_auth WHERE recovery_code = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, recoveryCode);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    long uid = rs.getLong("uid");
+                    String salt = rs.getString("salt");
+                    String newPasswordHash = sha256Hex(newPassword + salt);
+
+                    // 更新密码
+                    String updateSql = "UPDATE user_auth SET password_hash = ? WHERE uid = ?";
+                    try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                        updateStmt.setString(1, newPasswordHash);
+                        updateStmt.setLong(2, uid);
+                        return updateStmt.executeUpdate() > 0;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[RESET_PASSWORD] SQL error: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * 检查用户是否存在
+     */
+    private boolean checkUserExists(String username) {
+        String sql = "SELECT uid FROM user_auth WHERE username = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, username);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            System.err.println("[CHECK_USER] SQL error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 生成随机盐值
+     */
+    private String generateSalt() {
+        return UUID.randomUUID().toString().substring(0, 16);
     }
 
     private static String sha256Hex(String s) {
@@ -74,7 +159,6 @@ public class AuthService {
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
-            // 不太可能发生
             throw new RuntimeException(e);
         }
     }

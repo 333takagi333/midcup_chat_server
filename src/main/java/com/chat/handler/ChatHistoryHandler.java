@@ -1,21 +1,25 @@
 package com.chat.handler;
 
+import com.chat.core.ChatService;
+import com.chat.core.GroupService;
 import com.chat.protocol.ChatHistoryRequest;
 import com.chat.protocol.ChatHistoryResponse;
 import com.chat.protocol.MessageType;
-import com.chat.utils.DatabaseManager;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 聊天历史记录处理器
  */
 public class ChatHistoryHandler {
+
+    private final ChatService chatService;
+    private final GroupService groupService;
+
+    public ChatHistoryHandler() {
+        this.chatService = new ChatService();
+        this.groupService = new GroupService();
+    }
 
     /**
      * 处理聊天历史记录请求
@@ -65,125 +69,39 @@ public class ChatHistoryHandler {
      * 获取私聊历史记录
      */
     private List<ChatHistoryResponse.HistoryMessageItem> getPrivateChatHistory(
-            ChatHistoryRequest request, Long currentUid) throws SQLException {
+            ChatHistoryRequest request, Long currentUid) throws Exception {
 
-        List<ChatHistoryResponse.HistoryMessageItem> messages = new ArrayList<>();
-
-        String sql = "SELECT id, sender_id, receiver_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read " +
-                "FROM message " +
-                "WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)) " +
-                "AND group_id IS NULL ";
-
-        if (request.getBeforeTimestamp() != null) {
-            sql += "AND timestamp < ? ";
+        if (request.getTargetUserId() == null) {
+            throw new IllegalArgumentException("私聊目标用户ID不能为空");
         }
 
-        sql += "ORDER BY timestamp DESC LIMIT ?";
-
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            int paramIndex = 1;
-            stmt.setLong(paramIndex++, currentUid);
-            stmt.setLong(paramIndex++, request.getTargetUserId());
-            stmt.setLong(paramIndex++, request.getTargetUserId());
-            stmt.setLong(paramIndex++, currentUid);
-
-            if (request.getBeforeTimestamp() != null) {
-                stmt.setLong(paramIndex++, request.getBeforeTimestamp());
-            }
-
-            stmt.setInt(paramIndex, request.getLimit() != null ? request.getLimit() : 50);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    ChatHistoryResponse.HistoryMessageItem message = new ChatHistoryResponse.HistoryMessageItem();
-                    message.setId(rs.getLong("id"));
-                    message.setSenderId(rs.getLong("sender_id"));
-                    message.setReceiverId(rs.getLong("receiver_id"));
-                    message.setContent(rs.getString("content"));
-                    message.setContentType(rs.getString("content_type"));
-                    message.setFileUrl(rs.getString("file_url"));
-
-                    Long fileSize = rs.getLong("file_size");
-                    if (!rs.wasNull()) {
-                        message.setFileSize(fileSize);
-                    }
-
-                    message.setFileName(rs.getString("file_name"));
-                    message.setTimestamp(rs.getLong("timestamp"));
-                    message.setIsRead(rs.getInt("is_read"));
-
-                    messages.add(message);
-                }
-            }
-        }
-
-        return messages;
+        return chatService.getPrivateChatHistory(
+                currentUid,
+                request.getTargetUserId(),
+                request.getBeforeTimestamp(),
+                request.getLimit()
+        );
     }
 
     /**
      * 获取群聊历史记录
      */
     private List<ChatHistoryResponse.HistoryMessageItem> getGroupChatHistory(
-            ChatHistoryRequest request, Long currentUid) throws SQLException {
+            ChatHistoryRequest request, Long currentUid) throws Exception {
 
-        List<ChatHistoryResponse.HistoryMessageItem> messages = new ArrayList<>();
+        if (request.getGroupId() == null) {
+            throw new IllegalArgumentException("群聊群组ID不能为空");
+        }
 
         // 先检查用户是否在群组中
-        GroupHandler groupHandler = new GroupHandler();
-        if (!groupHandler.isUserInGroup(currentUid, request.getGroupId())) {
+        if (!groupService.isUserInGroup(currentUid, request.getGroupId())) {
             throw new SecurityException("用户不在该群组中");
         }
 
-        String sql = "SELECT id, sender_id, group_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read " +
-                "FROM message " +
-                "WHERE group_id = ? ";
-
-        if (request.getBeforeTimestamp() != null) {
-            sql += "AND timestamp < ? ";
-        }
-
-        sql += "ORDER BY timestamp DESC LIMIT ?";
-
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            int paramIndex = 1;
-            stmt.setLong(paramIndex++, request.getGroupId());
-
-            if (request.getBeforeTimestamp() != null) {
-                stmt.setLong(paramIndex++, request.getBeforeTimestamp());
-            }
-
-            stmt.setInt(paramIndex, request.getLimit() != null ? request.getLimit() : 50);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    ChatHistoryResponse.HistoryMessageItem message = new ChatHistoryResponse.HistoryMessageItem();
-                    message.setId(rs.getLong("id"));
-                    message.setSenderId(rs.getLong("sender_id"));
-                    message.setGroupId(rs.getLong("group_id"));
-                    message.setContent(rs.getString("content"));
-                    message.setContentType(rs.getString("content_type"));
-                    message.setFileUrl(rs.getString("file_url"));
-
-                    Long fileSize = rs.getLong("file_size");
-                    if (!rs.wasNull()) {
-                        message.setFileSize(fileSize);
-                    }
-
-                    message.setFileName(rs.getString("file_name"));
-                    message.setTimestamp(rs.getLong("timestamp"));
-                    message.setIsRead(rs.getInt("is_read"));
-
-                    messages.add(message);
-                }
-            }
-        }
-
-        return messages;
+        return chatService.getGroupChatHistory(
+                request.getGroupId(),
+                request.getBeforeTimestamp(),
+                request.getLimit()
+        );
     }
 }

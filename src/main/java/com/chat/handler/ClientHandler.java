@@ -1,6 +1,5 @@
 package com.chat.handler;
 
-import com.chat.core.AuthService;
 import com.chat.utils.OnlineUserManager;
 import com.chat.protocol.*;
 import com.google.gson.Gson;
@@ -18,6 +17,17 @@ public class ClientHandler implements Runnable {
     private final Gson gson = new Gson();
     private Long currentUid = null;
     private PrintWriter out;
+
+    // Handler实例
+    private final LoginHandler loginHandler = new LoginHandler();
+    private final RegisterHandler registerHandler = new RegisterHandler();
+    private final UserInfoHandler userInfoHandler = new UserInfoHandler();
+    private final FriendHandler friendHandler = new FriendHandler();
+    private final ChatHandler chatHandler = new ChatHandler();
+    private final ChatGroupHandler chatGroupHandler = new ChatGroupHandler();
+    private final GroupHandler groupHandler = new GroupHandler();
+    private final ChatHistoryHandler chatHistoryHandler = new ChatHistoryHandler();
+    private final ResetPasswordHandler resetPasswordHandler = new ResetPasswordHandler();
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -47,22 +57,50 @@ public class ClientHandler implements Runnable {
                             LoginRequest loginReq = gson.fromJson(line, LoginRequest.class);
                             handleLogin(loginReq);
                         }
+                        case MessageType.REGISTER_REQUEST -> {
+                            RegisterRequest registerReq = gson.fromJson(line, RegisterRequest.class);
+                            handleRegister(registerReq);
+                        }
+                        case MessageType.USER_INFO_REQUEST -> {
+                            if (currentUid == null) break;
+                            UserInfoRequest userInfoReq = gson.fromJson(line, UserInfoRequest.class);
+                            handleUserInfo(userInfoReq);
+                        }
+                        case MessageType.FRIEND_ADD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendAddRequest friendReq = gson.fromJson(line, FriendAddRequest.class);
+                            handleFriendAdd(friendReq);
+                        }
+                        case MessageType.FRIEND_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendListRequest friendListReq = gson.fromJson(line, FriendListRequest.class);
+                            handleFriendList(friendListReq);
+                        }
+                        case MessageType.GROUP_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupListRequest groupListReq = gson.fromJson(line, GroupListRequest.class);
+                            handleGroupList(groupListReq);
+                        }
                         case MessageType.CHAT_PRIVATE_SEND -> {
-                            if (currentUid == null) {
-                                break;
-                            }
+                            if (currentUid == null) break;
                             ChatPrivateSend cps = gson.fromJson(line, ChatPrivateSend.class);
                             cps.setFromUserId(currentUid);
                             handlePrivateChat(cps);
                         }
+                        case MessageType.CHAT_GROUP_SEND -> {
+                            if (currentUid == null) break;
+                            ChatGroupSend cgs = gson.fromJson(line, ChatGroupSend.class);
+                            cgs.setFromUserId(currentUid);
+                            handleGroupChat(cgs);
+                        }
+                        case MessageType.CHAT_HISTORY_REQUEST -> {
+                            if (currentUid == null) break;
+                            ChatHistoryRequest historyReq = gson.fromJson(line, ChatHistoryRequest.class);
+                            handleChatHistory(historyReq);
+                        }
                         case MessageType.RESET_PASSWORD_REQUEST -> {
                             ResetPasswordRequest resetReq = gson.fromJson(line, ResetPasswordRequest.class);
                             handleResetPassword(resetReq);
-                        }
-                        // 新增：处理用户注册请求
-                        case MessageType.REGISTER_REQUEST -> {
-                            RegisterRequest registerReq = gson.fromJson(line, RegisterRequest.class);
-                            handleRegister(registerReq);
                         }
                         default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
@@ -81,36 +119,70 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    // 新增：处理用户注册的方法
-    private void handleRegister(RegisterRequest request) {
-        if (request == null) {
-            sendRegisterResponse(false, "请求数据为空", null);
-            return;
+    private void handleLogin(LoginRequest loginRequest) {
+        LoginResponse response = loginHandler.handle(loginRequest);
+        if (response.isSuccess() && response.getUid() != null) {
+            try {
+                currentUid = Long.parseLong(response.getUid());
+                OnlineUserManager.addUser(currentUid, out);
+                System.out.println("用户UID " + currentUid + " 登录成功，保持连接...");
+            } catch (NumberFormatException e) {
+                System.err.println("[LOGIN] UID格式错误: " + response.getUid());
+            }
         }
-
-        RegisterHandler registerHandler = new RegisterHandler();
-        RegisterResponse response = registerHandler.handle(request);
-
         sendJson(response);
+    }
 
-        // 注册后关闭连接（安全考虑，避免连接保持）
-        try {
-            clientSocket.close();
-        } catch (IOException e) {
-            System.out.println("[INFO] 注册后关闭连接: " + e.getMessage());
+    private void handleRegister(RegisterRequest registerRequest) {
+        RegisterResponse response = registerHandler.handle(registerRequest);
+        sendJson(response);
+    }
+
+    private void handleUserInfo(UserInfoRequest userInfoRequest) {
+        // 如果请求中没有指定userId，使用当前登录用户的UID
+        if (userInfoRequest.getUserId() == null) {
+            userInfoRequest.setUserId(currentUid);
+        }
+        UserInfoResponse response = userInfoHandler.handle(userInfoRequest);
+        sendJson(response);
+    }
+
+    private void handleFriendAdd(FriendAddRequest friendRequest) {
+        FriendAddResponse response = friendHandler.handleFriendAdd(friendRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleFriendList(FriendListRequest friendListRequest) {
+        FriendListResponse response = friendHandler.handleFriendList(friendListRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleGroupList(GroupListRequest groupListRequest) {
+        GroupListResponse response = groupHandler.handleGroupList(groupListRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handlePrivateChat(ChatPrivateSend chatRequest) {
+        boolean success = chatHandler.handle(chatRequest);
+        if (!success) {
+            System.out.println("[CHAT] 私聊消息处理失败");
         }
     }
 
-    // 原有的密码重置处理方法
-    private void handleResetPassword(ResetPasswordRequest request) {
-        if (request == null) {
-            sendResetPasswordResponse(false, "请求数据为空");
-            return;
+    private void handleGroupChat(ChatGroupSend chatRequest) {
+        boolean success = chatGroupHandler.handle(chatRequest);
+        if (!success) {
+            System.out.println("[GROUP_CHAT] 群聊消息处理失败");
         }
+    }
 
-        ResetPasswordHandler resetHandler = new ResetPasswordHandler();
-        ResetPasswordResponse response = resetHandler.handle(request);
+    private void handleChatHistory(ChatHistoryRequest historyRequest) {
+        ChatHistoryResponse response = chatHistoryHandler.handle(historyRequest, currentUid);
+        sendJson(response);
+    }
 
+    private void handleResetPassword(ResetPasswordRequest resetRequest) {
+        ResetPasswordResponse response = resetPasswordHandler.handle(resetRequest);
         sendJson(response);
 
         // 密码重置后关闭连接（安全考虑）
@@ -121,67 +193,6 @@ public class ClientHandler implements Runnable {
                 System.out.println("[INFO] 重置密码后关闭连接: " + e.getMessage());
             }
         }
-    }
-
-    // 原有的登录处理方法保持不变
-    private void handleLogin(LoginRequest loginRequest) {
-        if (loginRequest == null) {
-            sendLoginResponse(null, false, "Empty payload");
-            return;
-        }
-
-        String username = loginRequest.getUsername();
-        String password = loginRequest.getPassword();
-
-        AuthService auth = new AuthService();
-        Long uid = null;
-        try {
-            uid = auth.authenticateAndGetUid(username, password);
-        } catch (Exception ex) {
-            System.err.println("[AUTH] DB error: " + ex.getMessage());
-            ex.printStackTrace();
-        }
-
-        boolean ok = uid != null;
-        System.out.println("用户 " + username + " 登录" + (ok ? "成功" : "失败"));
-
-        if (ok) {
-            currentUid = uid;
-            OnlineUserManager.addUser(currentUid, out);
-            System.out.println("用户UID " + currentUid + " 登录成功，保持连接...");
-            sendLoginResponse(String.valueOf(uid), true, "Welcome, " + username);
-        } else {
-            sendLoginResponse(null, false, "Invalid username or password");
-            try {
-                clientSocket.close();
-            } catch (IOException ignored) {}
-        }
-    }
-
-    private void handlePrivateChat(ChatPrivateSend cps) {
-        if (cps == null) return;
-        new ChatHandler().handle(cps);
-    }
-
-    private void sendLoginResponse(String uid, boolean success, String message) {
-        LoginResponse resp = new LoginResponse();
-        resp.setType(MessageType.LOGIN_RESPONSE);
-        resp.setUid(uid);
-        resp.setSuccess(success);
-        resp.setMessage(message);
-        resp.setTimestamp(System.currentTimeMillis());
-        sendJson(resp);
-    }
-
-    // 新增：发送注册响应
-    private void sendRegisterResponse(boolean success, String message, Long uid) {
-        RegisterResponse resp = new RegisterResponse(success, message, uid);
-        sendJson(resp);
-    }
-
-    private void sendResetPasswordResponse(boolean success, String message) {
-        ResetPasswordResponse resp = new ResetPasswordResponse(success, message);
-        sendJson(resp);
     }
 
     private void sendJson(Object obj) {

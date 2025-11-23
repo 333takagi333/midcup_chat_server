@@ -14,6 +14,8 @@ public final class MessageType {
     public static final String LOGIN_RESPONSE = "login_response";           // S -> C
     public static final String USER_INFO_REQUEST = "user_info_request";     // C -> S
     public static final String USER_INFO_RESPONSE = "user_info_response";   // S -> C
+    public static final String UPDATE_PROFILE_REQUEST = "update_profile_request";     // C -> S
+    public static final String UPDATE_PROFILE_RESPONSE = "update_profile_response";   // S -> C
 
     // 聊天相关
     public static final String CHAT_PRIVATE_SEND = "chat_private_send";       // C -> S

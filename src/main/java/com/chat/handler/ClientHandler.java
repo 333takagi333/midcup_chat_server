@@ -66,6 +66,11 @@ public class ClientHandler implements Runnable {
                             UserInfoRequest userInfoReq = gson.fromJson(line, UserInfoRequest.class);
                             handleUserInfo(userInfoReq);
                         }
+                        case MessageType.UPDATE_PROFILE_REQUEST -> {
+                            if (currentUid == null) break;
+                            UpdateProfileRequest updateProfileReq = gson.fromJson(line, UpdateProfileRequest.class);
+                            handleUpdateProfile(updateProfileReq);
+                        }
                         case MessageType.FRIEND_ADD_REQUEST -> {
                             if (currentUid == null) break;
                             FriendAddRequest friendReq = gson.fromJson(line, FriendAddRequest.class);
@@ -144,6 +149,11 @@ public class ClientHandler implements Runnable {
             userInfoRequest.setUserId(currentUid);
         }
         UserInfoResponse response = userInfoHandler.handle(userInfoRequest);
+        sendJson(response);
+    }
+
+    private void handleUpdateProfile(UpdateProfileRequest updateProfileRequest) {
+        UpdateProfileResponse response = userInfoHandler.handleUpdateProfile(updateProfileRequest, currentUid);
         sendJson(response);
     }
 

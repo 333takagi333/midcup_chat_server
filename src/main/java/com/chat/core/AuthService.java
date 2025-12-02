@@ -10,6 +10,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 认证服务 - 处理用户登录、注册、密码重置等
@@ -17,7 +19,82 @@ import java.util.UUID;
 public class AuthService {
 
     /**
-     * 用户认证并获取UID
+     * 通过UID认证用户（新增方法）
+     */
+    public boolean authenticateByUid(Long uid, String password) {
+        if (uid == null || password == null) {
+            return false;
+        }
+
+        String sql = "SELECT password_hash, salt FROM user_auth WHERE uid = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setLong(1, uid);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    String storedHash = rs.getString("password_hash");
+                    String salt = rs.getString("salt");
+
+                    if (storedHash == null) return false;
+
+                    // 开发兜底：明文相等
+                    if (storedHash.equals(password)) {
+                        return true;
+                    }
+
+                    // 常见两种拼接顺序
+                    String h1 = sha256Hex((salt == null ? "" : salt) + password);
+                    String h2 = sha256Hex(password + (salt == null ? "" : salt));
+
+                    if (storedHash.equalsIgnoreCase(h1) || storedHash.equalsIgnoreCase(h2)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[AUTH] SQL error: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * 通过UID获取用户信息（新增方法）- 返回Map
+     */
+    public Map<String, String> getUserInfoByUid(Long uid) {
+        if (uid == null) {
+            return null;
+        }
+
+        String sql = "SELECT ua.username, up.avatar_url " +
+                "FROM user_auth ua " +
+                "LEFT JOIN user_profile up ON ua.uid = up.user_id " +
+                "WHERE ua.uid = ?";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setLong(1, uid);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    String username = rs.getString("username");
+                    String avatarUrl = rs.getString("avatar_url");
+
+                    // 使用Map返回数据
+                    Map<String, String> userInfo = new HashMap<>();
+                    userInfo.put("username", username);
+                    userInfo.put("avatarUrl", avatarUrl);
+                    return userInfo;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[GET_USER_INFO] SQL error: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * 用户认证并获取UID（保留原方法，用于兼容）
      */
     public Long authenticateAndGetUid(String username, String password) {
         if (username == null || password == null) {

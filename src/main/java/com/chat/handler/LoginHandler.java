@@ -4,13 +4,14 @@ import com.chat.core.AuthService;
 import com.chat.protocol.LoginRequest;
 import com.chat.protocol.LoginResponse;
 import com.chat.protocol.MessageType;
+import java.util.Map;
 
 public class LoginHandler {
 
     /**
-     * 处理登录（协议：login_request）
-     * 入参：LoginRequest（username/password）
-     * 返回：LoginResponse（type=login_response, uid/success/message）
+     * 处理登录（协议：login_request）- 使用UID登录
+     * 入参：LoginRequest（uid/password）
+     * 返回：LoginResponse（type=login_response, uid/success/message/avatarUrl/username）
      */
     public LoginResponse handle(LoginRequest loginRequest) {
         LoginResponse resp = new LoginResponse();
@@ -23,30 +24,51 @@ public class LoginHandler {
             return resp;
         }
 
-        String username = loginRequest.getUsername();
+        Long uid = loginRequest.getUid();  // 获取客户端传来的UID
         String password = loginRequest.getPassword();
 
+        // 参数检查
+        if (uid == null || password == null || password.isEmpty()) {
+            resp.setUid(null);
+            resp.setSuccess(false);
+            resp.setMessage("用户ID或密码不能为空");
+            return resp;
+        }
+
         AuthService auth = new AuthService();
-        Long uid = null;
+        boolean ok = false;
+        String username = null;
+        String avatarUrl = null;
+
         try {
-            uid = auth.authenticateAndGetUid(username, password);
+            // 使用新的认证方法，验证UID和密码
+            ok = auth.authenticateByUid(uid, password);
+            if (ok) {
+                // 获取用户信息（用户名和头像）
+                Map<String, String> userInfo = auth.getUserInfoByUid(uid);
+                if (userInfo != null) {
+                    username = userInfo.get("username");
+                    avatarUrl = userInfo.get("avatarUrl");
+                }
+            }
         } catch (Exception ex) {
             System.err.println("[AUTH] DB error: " + ex.getMessage());
             ex.printStackTrace();
         }
 
-        boolean ok = uid != null;
-        System.out.println("用户 " + username + " 登录" + (ok ? "成功" : "失败"));
+        System.out.println("用户UID " + uid + " 登录" + (ok ? "成功" : "失败"));
 
         if (ok) {
             resp.setUid(String.valueOf(uid));
             resp.setSuccess(true);
-            resp.setMessage("Welcome, " + username);
+            resp.setMessage("登录成功");
             resp.setTimestamp(System.currentTimeMillis());
+            resp.setUsername(username != null ? username : "用户" + uid);
+            resp.setAvatarUrl(avatarUrl != null ? avatarUrl : ""); // 如果没有头像返回空字符串
         } else {
             resp.setUid(null);
             resp.setSuccess(false);
-            resp.setMessage("Invalid username or password");
+            resp.setMessage("用户ID或密码错误");
             resp.setTimestamp(System.currentTimeMillis());
         }
         return resp;

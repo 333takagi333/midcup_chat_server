@@ -20,16 +20,16 @@ public class RegistrationService {
      * 注册新用户
      * @param username 用户名
      * @param password 密码（客户端已加密）
-     * @return 注册成功返回用户UID，失败返回null
+     * @return RegistrationResult 包含注册结果信息
      */
-    public Long registerUser(String username, String password) {
+    public RegistrationResult registerUser(String username, String password) {
         if (username == null || username.trim().isEmpty() || password == null) {
-            return null;
+            return new RegistrationResult(false, null, null, "注册信息不完整");
         }
 
         // 检查用户名是否已存在
         if (isUsernameExists(username)) {
-            return null;
+            return new RegistrationResult(false, null, null, "用户名已存在");
         }
 
         // 生成盐值和恢复代码
@@ -54,7 +54,8 @@ public class RegistrationService {
                         long uid = generatedKeys.getLong(1);
                         // 创建用户profile记录
                         createUserProfile(uid);
-                        return uid;
+                        // 返回注册结果，使用recovery_code作为密钥
+                        return new RegistrationResult(true, uid, recoveryCode, "注册成功");
                     }
                 }
             }
@@ -62,9 +63,43 @@ public class RegistrationService {
         } catch (SQLException e) {
             System.err.println("[REGISTRATION] SQL error: " + e.getMessage());
             e.printStackTrace();
+            return new RegistrationResult(false, null, null, "数据库错误: " + e.getMessage());
         }
 
-        return null;
+        return new RegistrationResult(false, null, null, "注册失败");
+    }
+
+    /**
+     * 注册结果封装类
+     */
+    public static class RegistrationResult {
+        private final boolean success;
+        private final Long uid;
+        private final String recoveryCode; // 使用recovery_code作为密钥
+        private final String message;
+
+        public RegistrationResult(boolean success, Long uid, String recoveryCode, String message) {
+            this.success = success;
+            this.uid = uid;
+            this.recoveryCode = recoveryCode;
+            this.message = message;
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public Long getUid() {
+            return uid;
+        }
+
+        public String getRecoveryCode() {
+            return recoveryCode;
+        }
+
+        public String getMessage() {
+            return message;
+        }
     }
 
     /**
@@ -115,14 +150,17 @@ public class RegistrationService {
     }
 
     /**
-     * 生成恢复代码
+     * 生成恢复代码（作为密钥返回给客户端）
+     * 生成12位大写字母数字组合的代码
      */
     private String generateRecoveryCode() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
+        String uuid = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        // 取前12位作为恢复代码
+        return uuid.substring(0, 12);
     }
 
     /**
-     * SHA-256 加密（用于服务端密码处理，如果客户端未加密的话）
+     * SHA-256 加密
      */
     public static String sha256Hex(String input) {
         try {

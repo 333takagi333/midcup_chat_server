@@ -6,7 +6,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-
+import java.sql.Date;
 /**
  * 用户信息服务 - 处理用户资料相关操作
  */
@@ -79,17 +79,57 @@ public class UserService {
                 }
             }
 
-            // 2. 检查是否存在用户资料记录
-            String checkSql = "SELECT user_id FROM user_profile WHERE user_id = ?";
-            boolean exists = false;
-            try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
-                checkStmt.setLong(1, profile.getUid());
-                try (ResultSet rs = checkStmt.executeQuery()) {
-                    exists = rs.next();
+            // 2. 先查询现有的用户资料（如果有的话），获取原有头像
+            String existingAvatarUrl = null;
+            String existingTele = null;
+            Integer existingGender = null;
+            Date existingBirthday = null;
+
+            String selectSql = "SELECT avatar_url, gender, birthday, tele FROM user_profile WHERE user_id = ?";
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
+                selectStmt.setLong(1, profile.getUid());
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    if (rs.next()) {
+                        existingAvatarUrl = rs.getString("avatar_url");
+                        existingTele = rs.getString("tele");
+                        existingGender = rs.getInt("gender");
+                        if (rs.wasNull()) existingGender = null;
+                        existingBirthday = rs.getDate("birthday");
+                    }
                 }
             }
 
-            // 3. 插入或更新 user_profile 表
+            boolean exists = existingAvatarUrl != null;
+
+            // 3. 准备更新的数据 - 如果用户没有提供新值，使用原有值
+            String avatarUrl = profile.getAvatarUrl();
+            if (avatarUrl == null || avatarUrl.trim().isEmpty()) {
+                avatarUrl = existingAvatarUrl; // 使用原有头像
+            }
+
+            String tele = profile.getTele();
+            if (tele == null || tele.trim().isEmpty()) {
+                tele = existingTele;
+            }
+
+            Integer gender = profile.getGender();
+            if (gender == null) {
+                gender = existingGender;
+            }
+
+            String birthdayStr = profile.getBirthday();
+            Date birthdayDate = null;
+            if (birthdayStr != null && !birthdayStr.trim().isEmpty()) {
+                try {
+                    birthdayDate = java.sql.Date.valueOf(birthdayStr.trim());
+                } catch (IllegalArgumentException e) {
+                    birthdayDate = existingBirthday; // 日期格式错误，保持原有
+                }
+            } else {
+                birthdayDate = existingBirthday;
+            }
+
+            // 4. 插入或更新 user_profile 表
             String profileSql;
             if (exists) {
                 profileSql = "UPDATE user_profile SET avatar_url = ?, gender = ?, birthday = ?, tele = ? WHERE user_id = ?";
@@ -99,31 +139,29 @@ public class UserService {
 
             try (PreparedStatement profileStmt = conn.prepareStatement(profileSql)) {
                 if (exists) {
-                    profileStmt.setString(1, profile.getAvatarUrl());
-                    profileStmt.setInt(2, profile.getGender() != null ? profile.getGender() : 0);
+                    profileStmt.setString(1, avatarUrl);
+                    profileStmt.setInt(2, gender != null ? gender : 0);
 
-                    // 处理生日字段
-                    if (profile.getBirthday() != null && !profile.getBirthday().trim().isEmpty()) {
-                        profileStmt.setDate(3, java.sql.Date.valueOf(profile.getBirthday()));
+                    if (birthdayDate != null) {
+                        profileStmt.setDate(3, birthdayDate);
                     } else {
                         profileStmt.setNull(3, java.sql.Types.DATE);
                     }
 
-                    profileStmt.setString(4, profile.getTele());
+                    profileStmt.setString(4, tele);
                     profileStmt.setLong(5, profile.getUid());
                 } else {
                     profileStmt.setLong(1, profile.getUid());
-                    profileStmt.setString(2, profile.getAvatarUrl());
-                    profileStmt.setInt(3, profile.getGender() != null ? profile.getGender() : 0);
+                    profileStmt.setString(2, avatarUrl);
+                    profileStmt.setInt(3, gender != null ? gender : 0);
 
-                    // 处理生日字段
-                    if (profile.getBirthday() != null && !profile.getBirthday().trim().isEmpty()) {
-                        profileStmt.setDate(4, java.sql.Date.valueOf(profile.getBirthday()));
+                    if (birthdayDate != null) {
+                        profileStmt.setDate(4, birthdayDate);
                     } else {
                         profileStmt.setNull(4, java.sql.Types.DATE);
                     }
 
-                    profileStmt.setString(5, profile.getTele());
+                    profileStmt.setString(5, tele);
                 }
 
                 int profileRows = profileStmt.executeUpdate();

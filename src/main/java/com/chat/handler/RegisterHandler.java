@@ -55,17 +55,22 @@ public class RegisterHandler {
         }
 
         try {
-            // 执行用户注册
-            Long uid = registrationService.registerUser(username, password);
+            // 执行用户注册，返回RegistrationResult
+            RegistrationService.RegistrationResult result =
+                    registrationService.registerUser(username, password);
 
-            if (uid != null) {
+            if (result.isSuccess()) {
                 response.setSuccess(true);
-                response.setUid(uid);
-                response.setMessage("注册成功");
-                System.out.println("[REGISTRATION] 用户注册成功，用户名: " + username + ", UID: " + uid);
+                response.setUid(result.getUid());
+                response.setSecretKey(result.getRecoveryCode()); // 设置recovery_code作为密钥
+                response.setMessage(result.getMessage());
+                System.out.println("[REGISTRATION] 用户注册成功，用户名: " + username +
+                        ", UID: " + result.getUid() +
+                        ", RecoveryCode: " + result.getRecoveryCode());
             } else {
                 response.setSuccess(false);
-                response.setMessage("用户名已存在或注册失败");
+                response.setMessage(result.getMessage() != null ?
+                        result.getMessage() : "注册失败");
                 System.err.println("[REGISTRATION] 用户注册失败，用户名: " + username);
             }
 

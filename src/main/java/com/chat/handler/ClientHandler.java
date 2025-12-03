@@ -28,6 +28,7 @@ public class ClientHandler implements Runnable {
     private final GroupHandler groupHandler = new GroupHandler();
     private final ChatHistoryHandler chatHistoryHandler = new ChatHistoryHandler();
     private final ResetPasswordHandler resetPasswordHandler = new ResetPasswordHandler();
+    private final SettingHandler settingHandler = new SettingHandler();
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -107,6 +108,26 @@ public class ClientHandler implements Runnable {
                             ResetPasswordRequest resetReq = gson.fromJson(line, ResetPasswordRequest.class);
                             handleResetPassword(resetReq);
                         }
+                        case MessageType.FRIEND_REQUEST_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendRequestListRequest friendReqListReq = gson.fromJson(line, FriendRequestListRequest.class);
+                            handleFriendRequestList(friendReqListReq);
+                        }
+                        case MessageType.FRIEND_REQUEST_RESPONSE -> {
+                            if (currentUid == null) break;
+                            FriendRequestResponse friendReqResp = gson.fromJson(line, FriendRequestResponse.class);
+                            handleFriendRequestResponse(friendReqResp);
+                        }
+                        case MessageType.GROUP_CREATE_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupCreateRequest groupCreateReq = gson.fromJson(line, GroupCreateRequest.class);
+                            handleGroupCreate(groupCreateReq);
+                        }
+                        case MessageType.CHANGE_PASSWORD_REQUEST -> {
+                            if (currentUid == null) break;
+                            ChangePasswordRequest changePwdReq = gson.fromJson(line, ChangePasswordRequest.class);
+                            handleChangePassword(changePwdReq);
+                        }
                         default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
                 } catch (JsonSyntaxException e) {
@@ -167,8 +188,23 @@ public class ClientHandler implements Runnable {
         sendJson(response);
     }
 
+    private void handleFriendRequestList(FriendRequestListRequest request) {
+        FriendRequestListResponse response = friendHandler.handleFriendRequestList(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleFriendRequestResponse(FriendRequestResponse request) {
+        FriendAddResponse response = friendHandler.handleFriendRequestResponse(request, currentUid);
+        sendJson(response);
+    }
+
     private void handleGroupList(GroupListRequest groupListRequest) {
         GroupListResponse response = groupHandler.handleGroupList(groupListRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleGroupCreate(GroupCreateRequest request) {
+        GroupCreateResponse response = groupHandler.handleGroupCreate(request, currentUid);
         sendJson(response);
     }
 
@@ -201,6 +237,28 @@ public class ClientHandler implements Runnable {
                 clientSocket.close();
             } catch (IOException e) {
                 System.out.println("[INFO] 重置密码后关闭连接: " + e.getMessage());
+            }
+        }
+    }
+
+    private void handleChangePassword(ChangePasswordRequest request) {
+        ChangePasswordResponse response = settingHandler.handleChangePassword(request, currentUid);
+        sendJson(response);
+
+        // 密码修改成功后强制用户重新登录（安全考虑）
+        if (response.isSuccess()) {
+            try {
+                System.out.println("[INFO] 用户 " + currentUid + " 修改密码成功，强制重新登录");
+
+                // 从在线用户列表中移除
+                OnlineUserManager.removeUser(currentUid);
+
+                // 关闭连接
+                if (!clientSocket.isClosed()) {
+                    clientSocket.close();
+                }
+            } catch (IOException e) {
+                System.out.println("[INFO] 关闭连接时发生错误: " + e.getMessage());
             }
         }
     }

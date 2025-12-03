@@ -1,13 +1,7 @@
 package com.chat.handler;
 
 import com.chat.core.FriendService;
-import com.chat.protocol.FriendAddRequest;
-import com.chat.protocol.FriendAddResponse;
-import com.chat.protocol.FriendListRequest;
-import com.chat.protocol.FriendListResponse;
-import com.chat.protocol.MessageType;
-
-import java.util.List;
+import com.chat.protocol.*;
 
 /**
  * 好友关系处理器
@@ -18,6 +12,74 @@ public class FriendHandler {
 
     public FriendHandler() {
         this.friendService = new FriendService();
+    }
+
+    /**
+     * 处理好友请求列表请求
+     */
+    public FriendRequestListResponse handleFriendRequestList(FriendRequestListRequest request, Long currentUid) {
+        FriendRequestListResponse response = new FriendRequestListResponse();
+        response.setType(MessageType.FRIEND_REQUEST_LIST_RESPONSE);
+
+        if (currentUid == null) {
+            response.setSuccess(false);
+            response.setMessage("用户未登录");
+            return response;
+        }
+
+        try {
+            var requests = friendService.getFriendRequests(currentUid);
+            response.setSuccess(true);
+            response.setRequests(requests);
+            response.setMessage("获取好友请求列表成功");
+        } catch (Exception e) {
+            response.setSuccess(false);
+            response.setMessage("获取好友请求列表失败: " + e.getMessage());
+        }
+
+        return response;
+    }
+
+    /**
+     * 处理好友请求响应（同意/拒绝）
+     */
+    public FriendAddResponse handleFriendRequestResponse(FriendRequestResponse request, Long currentUid) {
+        FriendAddResponse response = new FriendAddResponse();
+        response.setType(MessageType.FRIEND_ADD_RESPONSE);
+
+        if (request == null || currentUid == null) {
+            response.setSuccess(false);
+            response.setMessage("请求数据无效");
+            return response;
+        }
+
+        Long requestId = request.getRequestId();
+        if (requestId == null) {
+            response.setSuccess(false);
+            response.setMessage("请求ID不能为空");
+            return response;
+        }
+
+        boolean accept = request.isAccept();
+
+        try {
+            boolean success = friendService.processFriendRequest(requestId, currentUid, accept);
+
+            if (success) {
+                response.setSuccess(true);
+                response.setRequestId(requestId);
+                response.setStatus(accept ? 1 : 2);
+                response.setMessage(accept ? "好友请求已同意" : "好友请求已拒绝");
+            } else {
+                response.setSuccess(false);
+                response.setMessage("处理好友请求失败，请求可能不存在或已被处理");
+            }
+        } catch (Exception e) {
+            response.setSuccess(false);
+            response.setMessage("处理好友请求时发生错误: " + e.getMessage());
+        }
+
+        return response;
     }
 
     /**
@@ -87,7 +149,7 @@ public class FriendHandler {
             return response; // 返回空列表
         }
 
-        List<FriendListResponse.FriendItem> friends = friendService.getFriendList(currentUid);
+        var friends = friendService.getFriendList(currentUid);
         response.setFriends(friends);
         return response;
     }

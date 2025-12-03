@@ -1,12 +1,11 @@
 package com.chat.core;
 
 import com.chat.protocol.FriendListResponse;
+import com.chat.protocol.FriendRequestListResponse;
 import com.chat.utils.DatabaseManager;
+import com.chat.utils.OnlineUserManager;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,8 +15,139 @@ import java.util.List;
 public class FriendService {
 
     /**
-     * 检查用户是否存在
+     * 获取指定用户的好友请求列表（收到的请求）
      */
+    public List<FriendRequestListResponse.FriendRequestItem> getFriendRequests(Long userId) {
+        List<FriendRequestListResponse.FriendRequestItem> requests = new ArrayList<>();
+
+        String sql = "SELECT fr.id, fr.from_user, fr.status, ua.username " +
+                "FROM friend_request fr " +
+                "JOIN user_auth ua ON fr.from_user = ua.uid " +
+                "WHERE fr.to_user = ? AND fr.status = 0 " +
+                "ORDER BY fr.id DESC";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setLong(1, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    FriendRequestListResponse.FriendRequestItem item =
+                            new FriendRequestListResponse.FriendRequestItem();
+                    item.setRequestId(rs.getLong("id"));
+                    item.setFromUserId(rs.getLong("from_user"));
+                    item.setFromUsername(rs.getString("username"));
+                    item.setStatus(rs.getInt("status"));
+
+                    requests.add(item);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[GET_FRIEND_REQUESTS] SQL error: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return requests;
+    }
+
+    /**
+     * 处理好友请求（同意或拒绝）
+     */
+    public boolean processFriendRequest(Long requestId, Long currentUid, boolean accept) {
+        Connection conn = null;
+        try {
+            conn = DatabaseManager.getConnection();
+            conn.setAutoCommit(false);
+
+            // 1. 验证请求存在且属于当前用户
+            String checkSql = "SELECT id, from_user, to_user, status FROM friend_request " +
+                    "WHERE id = ? AND to_user = ? AND status = 0";
+
+            Long fromUserId = null;
+            Long toUserId = null;
+
+            try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+                checkStmt.setLong(1, requestId);
+                checkStmt.setLong(2, currentUid);
+
+                try (ResultSet rs = checkStmt.executeQuery()) {
+                    if (!rs.next()) {
+                        return false; // 请求不存在或已处理
+                    }
+                    fromUserId = rs.getLong("from_user");
+                    toUserId = rs.getLong("to_user");
+                }
+            }
+
+            // 2. 更新请求状态
+            String updateSql = "UPDATE friend_request SET status = ? WHERE id = ?";
+            int newStatus = accept ? 1 : 2; // 1同意，2拒绝
+
+            try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                updateStmt.setInt(1, newStatus);
+                updateStmt.setLong(2, requestId);
+                updateStmt.executeUpdate();
+            }
+
+            // 3. 如果同意，建立双向好友关系
+            if (accept && fromUserId != null && toUserId != null) {
+                // 检查是否已存在好友关系（防止重复）
+                String checkFriendship = "SELECT id FROM friendship " +
+                        "WHERE (user_id = ? AND friend_id = ?) " +
+                        "   OR (user_id = ? AND friend_id = ?)";
+
+                boolean alreadyFriends = false;
+                try (PreparedStatement checkStmt = conn.prepareStatement(checkFriendship)) {
+                    checkStmt.setLong(1, fromUserId);
+                    checkStmt.setLong(2, toUserId);
+                    checkStmt.setLong(3, toUserId);
+                    checkStmt.setLong(4, fromUserId);
+
+                    try (ResultSet rs = checkStmt.executeQuery()) {
+                        alreadyFriends = rs.next();
+                    }
+                }
+
+                if (!alreadyFriends) {
+                    // 建立双向好友关系
+                    String insertSql = "INSERT INTO friendship (user_id, friend_id) VALUES (?, ?), (?, ?)";
+                    try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                        insertStmt.setLong(1, fromUserId);
+                        insertStmt.setLong(2, toUserId);
+                        insertStmt.setLong(3, toUserId);
+                        insertStmt.setLong(4, fromUserId);
+                        insertStmt.executeUpdate();
+                    }
+                }
+            }
+
+            conn.commit();
+            return true;
+
+        } catch (SQLException e) {
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException ex) {
+                    System.err.println("[ROLLBACK_ERROR] " + ex.getMessage());
+                }
+            }
+            System.err.println("[PROCESS_REQUEST] SQL error: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true);
+                    conn.close();
+                } catch (SQLException e) {
+                    System.err.println("[CLOSE_CONN_ERROR] " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    // 以下是您原有的方法，保持不动
     public boolean userExists(Long userId) {
         String sql = "SELECT uid FROM user_auth WHERE uid = ?";
         try (Connection conn = DatabaseManager.getConnection();
@@ -32,9 +162,6 @@ public class FriendService {
         }
     }
 
-    /**
-     * 检查是否已经是好友
-     */
     public boolean isFriend(Long userId1, Long userId2) {
         String sql = "SELECT id FROM friendship WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)";
         try (Connection conn = DatabaseManager.getConnection();
@@ -52,9 +179,6 @@ public class FriendService {
         }
     }
 
-    /**
-     * 检查是否有待处理的好友请求
-     */
     public boolean hasPendingRequest(Long fromUser, Long toUser) {
         String sql = "SELECT id FROM friend_request WHERE from_user = ? AND to_user = ? AND status = 0";
         try (Connection conn = DatabaseManager.getConnection();
@@ -70,9 +194,6 @@ public class FriendService {
         }
     }
 
-    /**
-     * 创建好友请求
-     */
     public Long createFriendRequest(Long fromUser, Long toUser) {
         String sql = "INSERT INTO friend_request (from_user, to_user, status) VALUES (?, ?, 0)";
         try (Connection conn = DatabaseManager.getConnection();
@@ -94,9 +215,6 @@ public class FriendService {
         return null;
     }
 
-    /**
-     * 获取好友列表
-     */
     public List<FriendListResponse.FriendItem> getFriendList(Long userId) {
         List<FriendListResponse.FriendItem> friends = new ArrayList<>();
 

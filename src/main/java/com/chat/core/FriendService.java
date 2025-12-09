@@ -1,5 +1,7 @@
 package com.chat.core;
 
+import com.chat.protocol.DeleteFriendResponse;
+import com.chat.protocol.FriendDetailResponse;
 import com.chat.protocol.FriendListResponse;
 import com.chat.protocol.FriendRequestListResponse;
 import com.chat.utils.DatabaseManager;
@@ -246,5 +248,133 @@ public class FriendService {
         }
 
         return friends;
+    }
+
+    public FriendDetailResponse getFriendDetail(Long userId, Long friendId) {
+        FriendDetailResponse response = new FriendDetailResponse();
+
+        // 验证是否是好友关系
+        if (!isFriend(userId, friendId)) {
+            response.setSuccess(false);
+            response.setMessage("对方不是你的好友");
+            return response;
+        }
+
+        String sql = "SELECT u.uid, u.username, p.avatar_url, p.gender, p.birthday, p.tele " +
+                "FROM user_auth u " +
+                "LEFT JOIN user_profile p ON u.uid = p.user_id " +
+                "WHERE u.uid = ?";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setLong(1, friendId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    response.setSuccess(true);
+                    response.setFriendId(rs.getLong("uid"));
+                    response.setUsername(rs.getString("username"));
+                    response.setAvatarUrl(rs.getString("avatar_url"));
+                    response.setGender(rs.getInt("gender"));
+
+                    // 处理生日字段（可能为 null）
+                    Date birthday = rs.getDate("birthday");
+                    if (birthday != null) {
+                        response.setBirthday(birthday.toString());
+                    } else {
+                        response.setBirthday("");
+                    }
+
+                    // 处理电话字段（可能为 null）
+                    String tele = rs.getString("tele");
+                    response.setTele(tele != null ? tele : "");
+
+                    // 如果结果集中没有某些字段，设为默认值
+                    if (rs.wasNull()) {
+                        response.setGender(0); // 0表示未知
+                    }
+                } else {
+                    response.setSuccess(false);
+                    response.setMessage("好友不存在");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[GET_FRIEND_DETAIL] SQL error: " + e.getMessage());
+            e.printStackTrace();
+            response.setSuccess(false);
+            response.setMessage("数据库查询失败: " + e.getMessage());
+        }
+
+        return response;
+    }
+
+    /**
+     * 删除好友关系
+     */
+    public DeleteFriendResponse deleteFriend(Long userId, Long friendId) {
+        DeleteFriendResponse response = new DeleteFriendResponse();
+        Connection conn = null;
+
+        try {
+            conn = DatabaseManager.getConnection();
+            conn.setAutoCommit(false);
+
+            // 1. 验证是否是好友关系
+            if (!isFriend(userId, friendId)) {
+                response.setSuccess(false);
+                response.setMessage("对方不是你的好友");
+                return response;
+            }
+
+            // 2. 删除双向好友关系
+            String deleteSql = "DELETE FROM friendship WHERE " +
+                    "(user_id = ? AND friend_id = ?) OR " +
+                    "(user_id = ? AND friend_id = ?)";
+
+            try (PreparedStatement deleteStmt = conn.prepareStatement(deleteSql)) {
+                deleteStmt.setLong(1, userId);
+                deleteStmt.setLong(2, friendId);
+                deleteStmt.setLong(3, friendId);
+                deleteStmt.setLong(4, userId);
+
+                int rowsDeleted = deleteStmt.executeUpdate();
+
+                if (rowsDeleted > 0) {
+                    response.setSuccess(true);
+                    response.setMessage("好友删除成功");
+                    conn.commit();
+                } else {
+                    response.setSuccess(false);
+                    response.setMessage("好友删除失败");
+                    conn.rollback();
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("[DELETE_FRIEND] SQL error: " + e.getMessage());
+            e.printStackTrace();
+            response.setSuccess(false);
+            response.setMessage("数据库操作失败: " + e.getMessage());
+
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException ex) {
+                    System.err.println("[ROLLBACK_ERROR] " + ex.getMessage());
+                }
+            }
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true);
+                    conn.close();
+                } catch (SQLException e) {
+                    System.err.println("[CLOSE_CONN_ERROR] " + e.getMessage());
+                }
+            }
+        }
+
+        return response;
     }
 }

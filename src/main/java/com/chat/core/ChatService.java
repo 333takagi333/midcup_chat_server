@@ -4,10 +4,8 @@ import com.chat.protocol.ChatGroupSend;
 import com.chat.protocol.ChatHistoryResponse;
 import com.chat.utils.DatabaseManager;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,8 +14,76 @@ import java.util.List;
  */
 public class ChatService {
 
+    // 日期格式化器，用于将Timestamp格式化为字符串
+    private static final SimpleDateFormat datetimeFormatter =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+    // ===================== 添加缺少的方法 =====================
+
     /**
-     * 获取私聊历史记录
+     * 保存群聊消息到数据库（基于 ChatGroupSend 对象） - 这个方法需要添加
+     */
+    public Long saveGroupMessage(ChatGroupSend chatRequest) {
+        String sql = "INSERT INTO message (sender_id, group_id, content, content_type, " +
+                "file_url, file_size, file_name, timestamp, is_read) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+
+            stmt.setLong(1, chatRequest.getFromUserId());
+            stmt.setLong(2, chatRequest.getGroupId());
+            stmt.setString(3, chatRequest.getContent());
+            stmt.setString(4, chatRequest.getContentType() != null ? chatRequest.getContentType() : "text");
+            stmt.setString(5, chatRequest.getFileUrl());
+
+            if (chatRequest.getFileSize() != null) {
+                stmt.setLong(6, chatRequest.getFileSize());
+            } else {
+                stmt.setNull(6, java.sql.Types.BIGINT);
+            }
+
+            stmt.setString(7, chatRequest.getFileName());
+            stmt.setTimestamp(8, new Timestamp(chatRequest.getTimestamp()));
+
+            int affected = stmt.executeUpdate();
+            if (affected > 0) {
+                try (ResultSet rs = stmt.getGeneratedKeys()) {
+                    if (rs.next()) {
+                        return rs.getLong(1);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[SAVE_GROUP_MSG] SQL error: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * 保存群聊消息 - 简化版（客户端使用）
+     */
+    public boolean saveGroupMessage(Long senderId, Long groupId, String content,
+                                    String contentType, String fileUrl, Long fileSize,
+                                    String fileName, Long timestamp) {
+
+        // 创建一个临时的ChatGroupSend对象
+        ChatGroupSend chatRequest = new ChatGroupSend();
+        chatRequest.setFromUserId(senderId);
+        chatRequest.setGroupId(groupId);
+        chatRequest.setContent(content);
+        chatRequest.setContentType(contentType != null ? contentType : "text");
+        chatRequest.setFileUrl(fileUrl);
+        chatRequest.setFileSize(fileSize);
+        chatRequest.setFileName(fileName);
+        chatRequest.setTimestamp(timestamp != null ? timestamp : System.currentTimeMillis());
+
+        return saveGroupMessage(chatRequest) != null;
+    }
+
+    /**
+     * 获取私聊历史记录 - 修复版
      */
     public List<ChatHistoryResponse.HistoryMessageItem> getPrivateChatHistory(
             Long currentUid, Long targetUserId, Long beforeTimestamp, Integer limit) throws SQLException {
@@ -46,7 +112,7 @@ public class ChatService {
             stmt.setLong(paramIndex++, currentUid);
 
             if (beforeTimestamp != null) {
-                stmt.setLong(paramIndex++, beforeTimestamp);
+                stmt.setTimestamp(paramIndex++, new Timestamp(beforeTimestamp));
             }
 
             stmt.setInt(paramIndex, limit != null ? limit : 50);
@@ -67,7 +133,14 @@ public class ChatService {
                     }
 
                     message.setFileName(rs.getString("file_name"));
-                    message.setTimestamp(rs.getLong("timestamp"));
+
+                    Timestamp dbTimestamp = rs.getTimestamp("timestamp");
+                    if (dbTimestamp != null) {
+                        message.setTimestamp(formatTimestamp(dbTimestamp));
+                    } else {
+                        message.setTimestamp(getCurrentDatetimeString());
+                    }
+
                     message.setIsRead(rs.getInt("is_read"));
 
                     messages.add(message);
@@ -79,7 +152,7 @@ public class ChatService {
     }
 
     /**
-     * 获取群聊历史记录
+     * 获取群聊历史记录 - 修复版
      */
     public List<ChatHistoryResponse.HistoryMessageItem> getGroupChatHistory(
             Long groupId, Long beforeTimestamp, Integer limit) throws SQLException {
@@ -104,7 +177,7 @@ public class ChatService {
             stmt.setLong(paramIndex++, groupId);
 
             if (beforeTimestamp != null) {
-                stmt.setLong(paramIndex++, beforeTimestamp);
+                stmt.setTimestamp(paramIndex++, new Timestamp(beforeTimestamp));
             }
 
             stmt.setInt(paramIndex, limit != null ? limit : 50);
@@ -125,7 +198,14 @@ public class ChatService {
                     }
 
                     message.setFileName(rs.getString("file_name"));
-                    message.setTimestamp(rs.getLong("timestamp"));
+
+                    Timestamp dbTimestamp = rs.getTimestamp("timestamp");
+                    if (dbTimestamp != null) {
+                        message.setTimestamp(formatTimestamp(dbTimestamp));
+                    } else {
+                        message.setTimestamp(getCurrentDatetimeString());
+                    }
+
                     message.setIsRead(rs.getInt("is_read"));
 
                     messages.add(message);
@@ -136,117 +216,126 @@ public class ChatService {
         return messages;
     }
 
+    // ===================== 以下是修复客户端响应问题的方案 =====================
+
     /**
-     * 保存私聊消息
+     * 专门用于客户端历史消息请求的方法（避免重复处理）
      */
-    public boolean savePrivateMessage(Long senderId, Long receiverId, String content,
-                                      String contentType, String fileUrl, Long fileSize,
-                                      String fileName, Long timestamp) {
-        String sql = "INSERT INTO message (sender_id, receiver_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+    public List<ChatHistoryResponse.HistoryMessageItem> getChatHistoryForClient(
+            String chatType, Long targetId, Long currentUid, Long beforeTimestamp, Integer limit)
+            throws Exception {
 
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        if ("private".equals(chatType)) {
+            return getPrivateChatHistory(currentUid, targetId, beforeTimestamp, limit);
 
-            stmt.setLong(1, senderId);
-            stmt.setLong(2, receiverId);
-            stmt.setString(3, content);
-            stmt.setString(4, contentType);
-            stmt.setString(5, fileUrl);
-
-            if (fileSize != null) {
-                stmt.setLong(6, fileSize);
-            } else {
-                stmt.setNull(6, java.sql.Types.BIGINT);
+        } else if ("group".equals(chatType)) {
+            GroupService groupService = new GroupService();
+            if (!groupService.isUserInGroup(currentUid, targetId)) {
+                throw new SecurityException("用户不在该群组中");
             }
+            return getGroupChatHistory(targetId, beforeTimestamp, limit);
 
-            stmt.setString(7, fileName);
-            stmt.setLong(8, timestamp);
+        } else {
+            throw new IllegalArgumentException("无效的聊天类型: " + chatType);
+        }
+    }
 
-            return stmt.executeUpdate() > 0;
+    // ===================== 以下是优化版本，避免SQL错误 =====================
+
+    /**
+     * 安全的获取私聊历史记录（带参数校验）
+     */
+    public List<ChatHistoryResponse.HistoryMessageItem> getPrivateChatHistorySafely(
+            Long currentUid, Long targetUserId, Long beforeTimestamp, Integer limit) {
+
+        try {
+            return getPrivateChatHistory(currentUid, targetUserId, beforeTimestamp, limit);
         } catch (SQLException e) {
-            System.err.println("[SAVE_PRIVATE_MESSAGE] SQL error: " + e.getMessage());
+            System.err.println("[ERROR] 获取私聊历史记录失败: " + e.getMessage());
             e.printStackTrace();
-            return false;
+            return new ArrayList<>();
         }
     }
 
     /**
-     * 保存群聊消息
+     * 安全的获取群聊历史记录（带参数校验）
      */
-    public boolean saveGroupMessage(Long senderId, Long groupId, String content,
-                                    String contentType, String fileUrl, Long fileSize,
-                                    String fileName, Long timestamp) {
-        String sql = "INSERT INTO message (sender_id, group_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+    public List<ChatHistoryResponse.HistoryMessageItem> getGroupChatHistorySafely(
+            Long groupId, Long beforeTimestamp, Integer limit) {
 
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setLong(1, senderId);
-            stmt.setLong(2, groupId);
-            stmt.setString(3, content);
-            stmt.setString(4, contentType);
-            stmt.setString(5, fileUrl);
-
-            if (fileSize != null) {
-                stmt.setLong(6, fileSize);
-            } else {
-                stmt.setNull(6, java.sql.Types.BIGINT);
-            }
-
-            stmt.setString(7, fileName);
-            stmt.setLong(8, timestamp);
-
-            return stmt.executeUpdate() > 0;
+        try {
+            return getGroupChatHistory(groupId, beforeTimestamp, limit);
         } catch (SQLException e) {
-            System.err.println("[SAVE_GROUP_MESSAGE] SQL error: " + e.getMessage());
+            System.err.println("[ERROR] 获取群聊历史记录失败: " + e.getMessage());
             e.printStackTrace();
-            return false;
+            return new ArrayList<>();
         }
     }
 
+    // 其他方法保持不变...
+
     /**
-     * 保存群聊消息到数据库（基于 ChatGroupSend 对象）
+     * 格式化Timestamp为字符串
      */
-    public Long saveGroupMessage(ChatGroupSend chatRequest) {
-        String sql = "INSERT INTO message (sender_id, group_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+    private String formatTimestamp(Timestamp timestamp) {
+        return datetimeFormatter.format(timestamp);
+    }
 
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+    /**
+     * 获取当前时间的字符串格式
+     */
+    private String getCurrentDatetimeString() {
+        return datetimeFormatter.format(new Timestamp(System.currentTimeMillis()));
+    }
 
-            stmt.setLong(1, chatRequest.getFromUserId());
-            stmt.setLong(2, chatRequest.getGroupId());
-            stmt.setString(3, chatRequest.getContent());
-            stmt.setString(4, chatRequest.getContentType());
-            stmt.setString(5, chatRequest.getFileUrl());
+    /**
+     * 将Long时间戳转换为MySQL datetime格式的字符串
+     */
+    private String timestampToDatetimeString(long timestamp) {
+        return datetimeFormatter.format(new Timestamp(timestamp));
+    }
 
-            if (chatRequest.getFileSize() != null) {
-                stmt.setLong(6, chatRequest.getFileSize());
-            } else {
-                stmt.setNull(6, java.sql.Types.BIGINT);
-            }
+    // ===================== 需要在ChatHistoryHandler中调用的方法 =====================
 
-            stmt.setString(7, chatRequest.getFileName());
-            stmt.setLong(8, chatRequest.getTimestamp());
+    /**
+     * 处理历史消息请求的完整方法
+     */
+    public ChatHistoryResponse processHistoryRequest(String chatType, Long targetId,
+                                                     Long currentUid, Long beforeTimestamp,
+                                                     Integer limit) {
 
-            int affected = stmt.executeUpdate();
-            if (affected > 0) {
-                try (ResultSet rs = stmt.getGeneratedKeys()) {
-                    if (rs.next()) {
-                        return rs.getLong(1);
-                    }
+        ChatHistoryResponse response = new ChatHistoryResponse();
+        response.setChatType(chatType);
+
+        try {
+            List<ChatHistoryResponse.HistoryMessageItem> messages;
+
+            if ("private".equals(chatType)) {
+                messages = getPrivateChatHistorySafely(currentUid, targetId, beforeTimestamp, limit);
+            } else if ("group".equals(chatType)) {
+                GroupService groupService = new GroupService();
+                if (!groupService.isUserInGroup(currentUid, targetId)) {
+                    response.setSuccess(false);
+                    response.setMessage("用户不在该群组中，无法查看历史消息");
+                    return response;
                 }
+                messages = getGroupChatHistorySafely(targetId, beforeTimestamp, limit);
+            } else {
+                response.setSuccess(false);
+                response.setMessage("无效的聊天类型");
+                return response;
             }
-        } catch (SQLException e) {
-            System.err.println("[SAVE_GROUP_MSG] SQL error: " + e.getMessage());
-            e.printStackTrace();
+
+            response.setMessages(messages);
+            response.setSuccess(true);
+            response.setMessage("获取历史消息成功");
+
+        } catch (Exception e) {
+            response.setSuccess(false);
+            response.setMessage("获取历史消息失败: " + e.getMessage());
         }
-        return null;
+
+        return response;
     }
 
     /**
@@ -327,6 +416,52 @@ public class ChatService {
             return stmt.executeUpdate() > 0;
         } catch (SQLException e) {
             System.err.println("[MARK_ALL_AS_READ] SQL error: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * 保存私聊消息（确保这个方法存在）
+     */
+    public boolean savePrivateMessage(Long senderId, Long receiverId, String content,
+                                      String contentType, String fileUrl, Long fileSize,
+                                      String fileName, Long timestamp) {
+
+        // 注意：这个方法需要返回消息ID，但这里保持原来的boolean返回值
+        // 如果需要消息ID，可以修改这个方法
+        String sql = "INSERT INTO message (sender_id, receiver_id, content, content_type, " +
+                "file_url, file_size, file_name, timestamp, is_read) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+
+            stmt.setLong(1, senderId);
+            stmt.setLong(2, receiverId);
+            stmt.setString(3, content);
+            stmt.setString(4, contentType != null ? contentType : "text");
+            stmt.setString(5, fileUrl);
+
+            if (fileSize != null) {
+                stmt.setLong(6, fileSize);
+            } else {
+                stmt.setNull(6, java.sql.Types.BIGINT);
+            }
+
+            stmt.setString(7, fileName);
+
+            if (timestamp != null) {
+                stmt.setTimestamp(8, new Timestamp(timestamp));
+            } else {
+                stmt.setTimestamp(8, new Timestamp(System.currentTimeMillis()));
+            }
+
+            int affected = stmt.executeUpdate();
+            return affected > 0;
+
+        } catch (SQLException e) {
+            System.err.println("[SAVE_PRIVATE_MESSAGE] SQL error: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

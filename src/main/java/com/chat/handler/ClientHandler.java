@@ -29,6 +29,8 @@ public class ClientHandler implements Runnable {
     private final ChatHistoryHandler chatHistoryHandler = new ChatHistoryHandler();
     private final ResetPasswordHandler resetPasswordHandler = new ResetPasswordHandler();
     private final SettingHandler settingHandler = new SettingHandler();
+    private final FriendProfileHandler friendProfileHandler = new FriendProfileHandler();
+    private final GroupDetailHandler groupDetailHandler = new GroupDetailHandler();
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -128,6 +130,26 @@ public class ClientHandler implements Runnable {
                             ChangePasswordRequest changePwdReq = gson.fromJson(line, ChangePasswordRequest.class);
                             handleChangePassword(changePwdReq);
                         }
+                        case MessageType.FRIEND_DETAIL_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendDetailRequest friendDetailReq = gson.fromJson(line, FriendDetailRequest.class);
+                            handleFriendDetail(friendDetailReq);
+                        }
+                        case MessageType.DELETE_FRIEND_REQUEST -> {
+                            if (currentUid == null) break;
+                            DeleteFriendRequest deleteFriendReq = gson.fromJson(line, DeleteFriendRequest.class);
+                            handleDeleteFriend(deleteFriendReq);
+                        }
+                        case MessageType.GROUP_DETAIL_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupDetailRequest groupDetailReq = gson.fromJson(line, GroupDetailRequest.class);
+                            handleGroupDetail(groupDetailReq);
+                        }
+                        case MessageType.EXIT_GROUP_REQUEST -> {
+                            if (currentUid == null) break;
+                            ExitGroupRequest exitGroupReq = gson.fromJson(line, ExitGroupRequest.class);
+                            handleExitGroup(exitGroupReq);
+                        }
                         default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
                 } catch (JsonSyntaxException e) {
@@ -188,6 +210,16 @@ public class ClientHandler implements Runnable {
         sendJson(response);
     }
 
+    private void handleGroupDetail(GroupDetailRequest request) {
+        GroupDetailResponse response = groupDetailHandler.handleGroupDetail(request);
+        sendJson(response);
+    }
+
+    private void handleExitGroup(ExitGroupRequest request) {
+        ExitGroupResponse response = groupDetailHandler.handleExitGroup(request);
+        sendJson(response);
+    }
+
     private void handleFriendRequestList(FriendRequestListRequest request) {
         FriendRequestListResponse response = friendHandler.handleFriendRequestList(request, currentUid);
         sendJson(response);
@@ -205,6 +237,11 @@ public class ClientHandler implements Runnable {
 
     private void handleGroupCreate(GroupCreateRequest request) {
         GroupCreateResponse response = groupHandler.handleGroupCreate(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleDeleteFriend(DeleteFriendRequest request) {
+        DeleteFriendResponse response = friendProfileHandler.handleDeleteFriend(request);
         sendJson(response);
     }
 
@@ -261,6 +298,11 @@ public class ClientHandler implements Runnable {
                 System.out.println("[INFO] 关闭连接时发生错误: " + e.getMessage());
             }
         }
+    }
+
+    private void handleFriendDetail(FriendDetailRequest request) {
+        FriendDetailResponse response = friendProfileHandler.handleFriendDetail(request);
+        sendJson(response);
     }
 
     private void sendJson(Object obj) {

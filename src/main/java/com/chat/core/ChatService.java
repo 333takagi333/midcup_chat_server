@@ -47,10 +47,14 @@ public class ChatService {
             stmt.setTimestamp(8, new Timestamp(chatRequest.getTimestamp()));
 
             int affected = stmt.executeUpdate();
+            System.out.println("[SAVE_GROUP_MSG] 保存群聊消息，影响行数: " + affected);
+
             if (affected > 0) {
                 try (ResultSet rs = stmt.getGeneratedKeys()) {
                     if (rs.next()) {
-                        return rs.getLong(1);
+                        Long messageId = rs.getLong(1);
+                        System.out.println("[SAVE_GROUP_MSG] 消息保存成功，ID: " + messageId);
+                        return messageId;
                     }
                 }
             }
@@ -58,6 +62,8 @@ public class ChatService {
             System.err.println("[SAVE_GROUP_MSG] SQL error: " + e.getMessage());
             e.printStackTrace();
         }
+
+        System.err.println("[SAVE_GROUP_MSG] 消息保存失败");
         return null;
     }
 
@@ -79,7 +85,8 @@ public class ChatService {
         chatRequest.setFileName(fileName);
         chatRequest.setTimestamp(timestamp != null ? timestamp : System.currentTimeMillis());
 
-        return saveGroupMessage(chatRequest) != null;
+        Long result = saveGroupMessage(chatRequest);
+        return result != null;
     }
 
     /**
@@ -272,7 +279,69 @@ public class ChatService {
         }
     }
 
-    // 其他方法保持不变...
+    // ===================== 以下是新添加的方法：保存私聊消息 =====================
+
+    /**
+     * 保存私聊消息到数据库
+     * 这个方法之前缺失，导致私聊消息无法保存
+     */
+    public boolean savePrivateMessage(Long senderId, Long receiverId, String content,
+                                      String contentType, String fileUrl, Long fileSize,
+                                      String fileName, Long timestamp) {
+
+        String sql = "INSERT INTO message (sender_id, receiver_id, content, content_type, " +
+                "file_url, file_size, file_name, timestamp, is_read) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setLong(1, senderId);
+            stmt.setLong(2, receiverId);
+            stmt.setString(3, content);
+            stmt.setString(4, contentType != null ? contentType : "text");
+
+            // 处理可能为null的文件相关字段
+            if (fileUrl != null && !fileUrl.isEmpty()) {
+                stmt.setString(5, fileUrl);
+            } else {
+                stmt.setNull(5, Types.VARCHAR);
+            }
+
+            if (fileSize != null && fileSize > 0) {
+                stmt.setLong(6, fileSize);
+            } else {
+                stmt.setNull(6, Types.BIGINT);
+            }
+
+            if (fileName != null && !fileName.isEmpty()) {
+                stmt.setString(7, fileName);
+            } else {
+                stmt.setNull(7, Types.VARCHAR);
+            }
+
+            // 处理时间戳
+            if (timestamp != null && timestamp > 0) {
+                stmt.setTimestamp(8, new Timestamp(timestamp));
+            } else {
+                stmt.setTimestamp(8, new Timestamp(System.currentTimeMillis()));
+            }
+
+            int affected = stmt.executeUpdate();
+            System.out.println("[SAVE_PRIVATE_MSG] 保存私聊消息，发送者:" + senderId +
+                    " -> 接收者:" + receiverId + "，影响行数:" + affected);
+
+            return affected > 0;
+
+        } catch (SQLException e) {
+            System.err.println("[SAVE_PRIVATE_MSG] SQL error: " + e.getMessage());
+            System.err.println("[SAVE_PRIVATE_MSG] SQL state: " + e.getSQLState());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    // ===================== 以下是原有方法保持不变 =====================
 
     /**
      * 格式化Timestamp为字符串
@@ -416,52 +485,6 @@ public class ChatService {
             return stmt.executeUpdate() > 0;
         } catch (SQLException e) {
             System.err.println("[MARK_ALL_AS_READ] SQL error: " + e.getMessage());
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    /**
-     * 保存私聊消息（确保这个方法存在）
-     */
-    public boolean savePrivateMessage(Long senderId, Long receiverId, String content,
-                                      String contentType, String fileUrl, Long fileSize,
-                                      String fileName, Long timestamp) {
-
-        // 注意：这个方法需要返回消息ID，但这里保持原来的boolean返回值
-        // 如果需要消息ID，可以修改这个方法
-        String sql = "INSERT INTO message (sender_id, receiver_id, content, content_type, " +
-                "file_url, file_size, file_name, timestamp, is_read) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)";
-
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
-
-            stmt.setLong(1, senderId);
-            stmt.setLong(2, receiverId);
-            stmt.setString(3, content);
-            stmt.setString(4, contentType != null ? contentType : "text");
-            stmt.setString(5, fileUrl);
-
-            if (fileSize != null) {
-                stmt.setLong(6, fileSize);
-            } else {
-                stmt.setNull(6, java.sql.Types.BIGINT);
-            }
-
-            stmt.setString(7, fileName);
-
-            if (timestamp != null) {
-                stmt.setTimestamp(8, new Timestamp(timestamp));
-            } else {
-                stmt.setTimestamp(8, new Timestamp(System.currentTimeMillis()));
-            }
-
-            int affected = stmt.executeUpdate();
-            return affected > 0;
-
-        } catch (SQLException e) {
-            System.err.println("[SAVE_PRIVATE_MESSAGE] SQL error: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

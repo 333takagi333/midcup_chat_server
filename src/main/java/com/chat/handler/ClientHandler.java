@@ -31,6 +31,7 @@ public class ClientHandler implements Runnable {
     private final SettingHandler settingHandler = new SettingHandler();
     private final FriendProfileHandler friendProfileHandler = new FriendProfileHandler();
     private final GroupDetailHandler groupDetailHandler = new GroupDetailHandler();
+    private final GroupMemberHandler groupMemberHandler = new GroupMemberHandler();
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -150,6 +151,11 @@ public class ClientHandler implements Runnable {
                             ExitGroupRequest exitGroupReq = gson.fromJson(line, ExitGroupRequest.class);
                             handleExitGroup(exitGroupReq);
                         }
+                        case MessageType.GROUP_ADD_MEMBER_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupAddMemberRequest groupAddMemberReq = gson.fromJson(line, GroupAddMemberRequest.class);
+                            handleGroupAddMember(groupAddMemberReq);
+                        }
                         default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
                 } catch (JsonSyntaxException e) {
@@ -257,6 +263,11 @@ public class ClientHandler implements Runnable {
         if (!success) {
             System.out.println("[GROUP_CHAT] 群聊消息处理失败");
         }
+    }
+
+    private void handleGroupAddMember(GroupAddMemberRequest request) {
+        GroupAddMemberResponse response = groupMemberHandler.handleAddMember(request, currentUid);
+        sendJson(response);
     }
 
     private void handleChatHistory(ChatHistoryRequest historyRequest) {

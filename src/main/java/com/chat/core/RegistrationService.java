@@ -19,12 +19,17 @@ public class RegistrationService {
     /**
      * 注册新用户
      * @param username 用户名
-     * @param password 密码（客户端已加密）
+     * @param password 密码（明文）
      * @return RegistrationResult 包含注册结果信息
      */
     public RegistrationResult registerUser(String username, String password) {
         if (username == null || username.trim().isEmpty() || password == null) {
             return new RegistrationResult(false, null, null, "注册信息不完整");
+        }
+
+        // 密码基本验证
+        if (password.trim().length() < 6) {
+            return new RegistrationResult(false, null, null, "密码长度至少为6位");
         }
 
         // 检查用户名是否已存在
@@ -36,13 +41,16 @@ public class RegistrationService {
         String salt = generateSalt();
         String recoveryCode = generateRecoveryCode();
 
+        // 对密码进行加盐哈希加密
+        String encryptedPassword = hashPasswordWithSalt(password, salt);
+
         String sql = "INSERT INTO user_auth (username, password_hash, salt, recovery_code) VALUES (?, ?, ?, ?)";
 
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
 
             stmt.setString(1, username.trim());
-            stmt.setString(2, password); // 使用客户端已加密的密码
+            stmt.setString(2, encryptedPassword); // 使用加密后的密码
             stmt.setString(3, salt);
             stmt.setString(4, recoveryCode);
 
@@ -103,6 +111,22 @@ public class RegistrationService {
     }
 
     /**
+     * 对密码进行加盐哈希加密
+     * 使用格式：SHA-256(salt + password)
+     * @param password 明文密码
+     * @param salt 盐值
+     * @return 加密后的密码哈希
+     */
+    private String hashPasswordWithSalt(String password, String salt) {
+        String hash = sha256Hex(salt + password);
+        System.out.println("[REGISTRATION_PASSWORD_HASH] 生成密码哈希");
+        System.out.println("[REGISTRATION_PASSWORD_HASH] 盐值: " + salt);
+        System.out.println("[REGISTRATION_PASSWORD_HASH] 明文密码: " + password);
+        System.out.println("[REGISTRATION_PASSWORD_HASH] 加密结果: " + hash);
+        return hash;
+    }
+
+    /**
      * 检查用户名是否已存在
      */
     private boolean isUsernameExists(String username) {
@@ -146,7 +170,9 @@ public class RegistrationService {
      * 生成随机盐值
      */
     private String generateSalt() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String salt = UUID.randomUUID().toString().substring(0, 16);
+        System.out.println("[REGISTRATION_SALT] 生成盐值: " + salt);
+        return salt;
     }
 
     /**
@@ -156,7 +182,9 @@ public class RegistrationService {
     private String generateRecoveryCode() {
         String uuid = UUID.randomUUID().toString().replace("-", "").toUpperCase();
         // 取前12位作为恢复代码
-        return uuid.substring(0, 12);
+        String recoveryCode = uuid.substring(0, 12);
+        System.out.println("[REGISTRATION_RECOVERY_CODE] 生成恢复代码: " + recoveryCode);
+        return recoveryCode;
     }
 
     /**

@@ -51,27 +51,49 @@ public class FileService {
     }
 
     /**
-     * 获取文件信息
+     * 根据文件ID获取文件信息（主要方法）
      */
     public FileInfo getFileInfo(String fileId, Long userId) {
-        String sql = "SELECT id, sender_id, receiver_id, group_id, file_url, file_size, file_name, " +
-                "content_type, timestamp FROM message " +
-                "WHERE file_url LIKE ? AND (sender_id = ? OR receiver_id = ? OR " +
-                "(group_id IS NOT NULL AND ? IN (SELECT user_id FROM group_member WHERE group_id = message.group_id)))";
+        // 如果fileId是格式为"file_数字"的字符串，提取数字作为消息ID
+        if (fileId.startsWith("file_")) {
+            try {
+                Long messageId = Long.parseLong(fileId.substring(5));
+                return getFileInfoByMessageId(messageId, userId);
+            } catch (NumberFormatException e) {
+                System.err.println("[FILE_SERVICE] 解析fileId失败: " + fileId);
+                return null;
+            }
+        }
+
+        // 如果fileId是纯数字，直接作为消息ID
+        try {
+            Long messageId = Long.parseLong(fileId);
+            return getFileInfoByMessageId(messageId, userId);
+        } catch (NumberFormatException e) {
+            System.err.println("[FILE_SERVICE] fileId格式无效: " + fileId);
+            return null;
+        }
+    }
+
+    /**
+     * 根据消息ID获取文件信息
+     */
+    private FileInfo getFileInfoByMessageId(Long messageId, Long userId) {
+        String sql = "SELECT m.id, m.sender_id, m.receiver_id, m.group_id, m.file_url, " +
+                "m.file_size, m.file_name, m.content_type, m.timestamp " +
+                "FROM message m " +
+                "WHERE m.id = ? AND m.content_type = 'file'";
 
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
-            stmt.setString(1, "%" + fileId + "%");
-            stmt.setLong(2, userId);
-            stmt.setLong(3, userId);
-            stmt.setLong(4, userId);
+            stmt.setLong(1, messageId);
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
                     FileInfo info = new FileInfo();
                     info.setId(rs.getLong("id"));
-                    info.setFileId(fileId);
+                    info.setFileId("file_" + rs.getLong("id"));
                     info.setSenderId(rs.getLong("sender_id"));
 
                     Object receiverObj = rs.getObject("receiver_id");
@@ -85,40 +107,71 @@ public class FileService {
                     info.setFileType(rs.getString("content_type"));
                     info.setDownloadUrl(rs.getString("file_url"));
                     info.setTimestamp(rs.getTimestamp("timestamp"));
+
+                    System.out.println("[FILE_SERVICE] 找到文件信息: " +
+                            "id=" + info.getId() + ", " +
+                            "fileName=" + info.getFileName() + ", " +
+                            "groupId=" + info.getGroupId() + ", " +
+                            "senderId=" + info.getSenderId());
+
                     return info;
+                } else {
+                    System.err.println("[FILE_SERVICE] 未找到文件信息: messageId=" + messageId);
                 }
             }
         } catch (SQLException e) {
-            System.err.println("[FILE_SERVICE] 获取文件信息失败: " + e.getMessage());
+            System.err.println("[FILE_SERVICE] 根据消息ID获取文件信息失败: " + e.getMessage());
             e.printStackTrace();
         }
         return null;
     }
 
     /**
-     * 验证用户是否有权限下载文件
+     * 验证用户是否有权限下载文件（简化版本 - 取消严格权限验证）
      */
     public boolean hasFilePermission(String fileId, Long userId) {
-        // 简化验证：文件存在即可下载
+        System.out.println("[FILE_SERVICE] 开始权限检查: fileId=" + fileId + ", userId=" + userId);
+
+        // 获取文件信息
         FileInfo info = getFileInfo(fileId, userId);
         if (info == null) {
+            System.err.println("[FILE_SERVICE] 权限检查失败: 未找到文件信息");
             return false;
         }
 
-        // 验证用户是否有权限
-        if (info.getSenderId().equals(userId)) {
-            return true; // 发送者可以下载
+        // 如果是私聊文件
+        if (info.getReceiverId() != null) {
+            // 发送者或接收者都可以下载
+            boolean allowed = info.getSenderId().equals(userId) ||
+                    info.getReceiverId().equals(userId);
+            System.out.println("[FILE_SERVICE] 私聊文件权限检查结果: " + allowed);
+            return allowed;
         }
 
-        if (info.getReceiverId() != null && info.getReceiverId().equals(userId)) {
-            return true; // 接收者可以下载
-        }
-
+        // 如果是群聊文件
         if (info.getGroupId() != null) {
-            // 如果是群聊文件，需要检查用户是否是群成员
-            return isGroupMember(info.getGroupId(), userId);
+            // 检查用户是否是群成员
+            boolean isMember = isGroupMember(info.getGroupId(), userId);
+            System.out.println("[FILE_SERVICE] 群聊文件权限检查结果: " +
+                    "groupId=" + info.getGroupId() + ", " +
+                    "userId=" + userId + ", " +
+                    "isMember=" + isMember);
+
+            // 如果是群成员，允许下载
+            if (isMember) {
+                return true;
+            }
+
+            // 如果不是群成员，但用户是文件发送者，也允许下载
+            if (info.getSenderId().equals(userId)) {
+                System.out.println("[FILE_SERVICE] 用户是文件发送者，允许下载");
+                return true;
+            }
+
+            return false;
         }
 
+        System.err.println("[FILE_SERVICE] 未知的文件类型");
         return false;
     }
 
@@ -136,13 +189,60 @@ public class FileService {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return rs.getInt(1) > 0;
+                    int count = rs.getInt(1);
+                    System.out.println("[FILE_SERVICE] 群成员检查: groupId=" + groupId +
+                            ", userId=" + userId + ", count=" + count);
+                    return count > 0;
                 }
             }
         } catch (SQLException e) {
             System.err.println("[FILE_SERVICE] 检查群成员失败: " + e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * 根据文件名和群组ID查找文件
+     */
+    public FileInfo findFileByGroupAndName(Long groupId, String fileName, Long userId) {
+        String sql = "SELECT m.id, m.sender_id, m.receiver_id, m.group_id, m.file_url, " +
+                "m.file_size, m.file_name, m.content_type, m.timestamp " +
+                "FROM message m " +
+                "WHERE m.group_id = ? AND m.file_name = ? AND m.content_type = 'file' " +
+                "ORDER BY m.timestamp DESC LIMIT 1";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setString(2, fileName);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    FileInfo info = new FileInfo();
+                    info.setId(rs.getLong("id"));
+                    info.setFileId("file_" + rs.getLong("id"));
+                    info.setSenderId(rs.getLong("sender_id"));
+                    info.setGroupId(rs.getLong("group_id"));
+                    info.setFileName(rs.getString("file_name"));
+                    info.setFileSize(rs.getLong("file_size"));
+                    info.setFileType(rs.getString("content_type"));
+                    info.setDownloadUrl(rs.getString("file_url"));
+                    info.setTimestamp(rs.getTimestamp("timestamp"));
+
+                    System.out.println("[FILE_SERVICE] 通过文件名找到文件: " +
+                            "fileName=" + fileName + ", " +
+                            "groupId=" + groupId + ", " +
+                            "fileId=" + info.getFileId());
+
+                    return info;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[FILE_SERVICE] 通过文件名查找文件失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return null;
     }
 
     /**

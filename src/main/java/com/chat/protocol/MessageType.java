@@ -75,4 +75,10 @@ public final class MessageType {
     public static final String FILE_UPLOAD_RESPONSE = "file_upload_response";
     public static final String FILE_DOWNLOAD_REQUEST = "file_download_request";
     public static final String FILE_DOWNLOAD_RESPONSE = "file_download_response";
+
+    // 文件发送相关
+    public static final String FILE_PRIVATE_SEND = "file_private_send";
+    public static final String FILE_GROUP_SEND = "file_group_send";
+    public static final String FILE_PRIVATE_RECEIVE = "file_private_receive";
+    public static final String FILE_GROUP_RECEIVE = "file_group_receive";
 }

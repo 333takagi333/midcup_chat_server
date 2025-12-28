@@ -32,6 +32,7 @@ public class ClientHandler implements Runnable {
     private final FriendProfileHandler friendProfileHandler = new FriendProfileHandler();
     private final GroupDetailHandler groupDetailHandler = new GroupDetailHandler();
     private final GroupMemberHandler groupMemberHandler = new GroupMemberHandler();
+    private final FileHandler fileHandler = new FileHandler();
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -156,6 +157,26 @@ public class ClientHandler implements Runnable {
                             GroupAddMemberRequest groupAddMemberReq = gson.fromJson(line, GroupAddMemberRequest.class);
                             handleGroupAddMember(groupAddMemberReq);
                         }
+                        case MessageType.FILE_UPLOAD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FileUploadRequest fileUploadReq = gson.fromJson(line, FileUploadRequest.class);
+                            handleFileUpload(fileUploadReq);
+                        }
+                        case MessageType.FILE_DOWNLOAD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FileDownloadRequest fileDownloadReq = gson.fromJson(line, FileDownloadRequest.class);
+                            handleFileDownload(fileDownloadReq);
+                        }
+                        case MessageType.FILE_PRIVATE_SEND -> {
+                            if (currentUid == null) break;
+                            FilePrivateSend filePrivateSend = gson.fromJson(line, FilePrivateSend.class);
+                            handleFilePrivateSend(filePrivateSend);
+                        }
+                        case MessageType.FILE_GROUP_SEND -> {
+                            if (currentUid == null) break;
+                            FileGroupSend fileGroupSend = gson.fromJson(line, FileGroupSend.class);
+                            handleFileGroupSend(fileGroupSend);
+                        }
                         default -> System.out.println("[WARN] Unsupported type: " + type);
                     }
                 } catch (JsonSyntaxException e) {
@@ -201,6 +222,29 @@ public class ClientHandler implements Runnable {
         sendJson(response);
     }
 
+    private void handleFileUpload(FileUploadRequest request) {
+        FileUploadResponse response = fileHandler.handleFileUpload(request);
+        sendJson(response);
+    }
+
+    private void handleFileDownload(FileDownloadRequest request) {
+        FileDownloadResponse response = fileHandler.handleFileDownload(request);
+        sendJson(response);
+    }
+
+    private void handleFilePrivateSend(FilePrivateSend message) {
+        boolean success = fileHandler.handleFilePrivateSend(message);
+        if (!success) {
+            System.out.println("[FILE] 私聊文件消息处理失败");
+        }
+    }
+
+    private void handleFileGroupSend(FileGroupSend message) {
+        boolean success = fileHandler.handleFileGroupSend(message);
+        if (!success) {
+            System.out.println("[FILE] 群聊文件消息处理失败");
+        }
+    }
     private void handleUpdateProfile(UpdateProfileRequest updateProfileRequest) {
         UpdateProfileResponse response = userInfoHandler.handleUpdateProfile(updateProfileRequest, currentUid);
         sendJson(response);

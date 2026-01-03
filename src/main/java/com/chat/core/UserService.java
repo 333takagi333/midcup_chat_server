@@ -79,17 +79,19 @@ public class UserService {
                 }
             }
 
-            // 2. 先查询现有的用户资料（如果有的话），获取原有头像
+            // 2. 先查询现有的用户资料（如果有的话），获取原有值
             String existingAvatarUrl = null;
             String existingTele = null;
             Integer existingGender = null;
             Date existingBirthday = null;
+            boolean exists = false; // 修复点：初始化为 false
 
             String selectSql = "SELECT avatar_url, gender, birthday, tele FROM user_profile WHERE user_id = ?";
             try (PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
                 selectStmt.setLong(1, profile.getUid());
                 try (ResultSet rs = selectStmt.executeQuery()) {
                     if (rs.next()) {
+                        exists = true; // 修复点：只要查询到记录，就说明存在
                         existingAvatarUrl = rs.getString("avatar_url");
                         existingTele = rs.getString("tele");
                         existingGender = rs.getInt("gender");
@@ -98,8 +100,6 @@ public class UserService {
                     }
                 }
             }
-
-            boolean exists = existingAvatarUrl != null;
 
             // 3. 准备更新的数据 - 如果用户没有提供新值，使用原有值
             String avatarUrl = profile.getAvatarUrl();
@@ -140,7 +140,11 @@ public class UserService {
             try (PreparedStatement profileStmt = conn.prepareStatement(profileSql)) {
                 if (exists) {
                     profileStmt.setString(1, avatarUrl);
-                    profileStmt.setInt(2, gender != null ? gender : 0);
+                    if (gender != null) {
+                        profileStmt.setInt(2, gender);
+                    } else {
+                        profileStmt.setNull(2, java.sql.Types.INTEGER);
+                    }
 
                     if (birthdayDate != null) {
                         profileStmt.setDate(3, birthdayDate);
@@ -153,7 +157,11 @@ public class UserService {
                 } else {
                     profileStmt.setLong(1, profile.getUid());
                     profileStmt.setString(2, avatarUrl);
-                    profileStmt.setInt(3, gender != null ? gender : 0);
+                    if (gender != null) {
+                        profileStmt.setInt(3, gender);
+                    } else {
+                        profileStmt.setNull(3, java.sql.Types.INTEGER);
+                    }
 
                     if (birthdayDate != null) {
                         profileStmt.setDate(4, birthdayDate);

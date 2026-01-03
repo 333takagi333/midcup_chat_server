@@ -34,13 +34,31 @@ public class GroupService {
                 }
             }
 
-            // 2. 插入群聊信息
-            String insertGroupSql = "INSERT INTO group_info (name, owner_id) VALUES (?, ?)";
+            // 2. 获取创建者的头像
+            String avatarUrl = null;
+            String getAvatarSql = "SELECT avatar_url FROM user_profile WHERE user_id = ?";
+            try (PreparedStatement avatarStmt = conn.prepareStatement(getAvatarSql)) {
+                avatarStmt.setLong(1, ownerId);
+                try (ResultSet rs = avatarStmt.executeQuery()) {
+                    if (rs.next()) {
+                        avatarUrl = rs.getString("avatar_url");
+                    }
+                }
+            }
+
+            // 如果没有找到头像，使用默认头像
+            if (avatarUrl == null || avatarUrl.isEmpty()) {
+                avatarUrl = "default_group_avatar.png"; // 默认群头像
+            }
+
+            // 3. 插入群聊信息（包含头像）
+            String insertGroupSql = "INSERT INTO group_info (name, owner_id, avatar) VALUES (?, ?, ?)";
             Long groupId = null;
 
             try (PreparedStatement insertStmt = conn.prepareStatement(insertGroupSql, PreparedStatement.RETURN_GENERATED_KEYS)) {
                 insertStmt.setString(1, groupName);
                 insertStmt.setLong(2, ownerId);
+                insertStmt.setString(3, avatarUrl); // 使用创建者头像
                 int affected = insertStmt.executeUpdate();
 
                 if (affected > 0) {
@@ -57,7 +75,7 @@ public class GroupService {
                 return null;
             }
 
-            // 3. 将创建者加入群聊成员
+            // 4. 将创建者加入群聊成员
             String insertMemberSql = "INSERT INTO group_member (group_id, user_id) VALUES (?, ?)";
             try (PreparedStatement memberStmt = conn.prepareStatement(insertMemberSql)) {
                 memberStmt.setLong(1, groupId);

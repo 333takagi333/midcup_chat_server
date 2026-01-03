@@ -1,0 +1,391 @@
+package com.chat.handler;
+
+import com.chat.utils.OnlineUserManager;
+import com.chat.protocol.*;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
+
+import java.io.*;
+import java.net.Socket;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class ClientHandler implements Runnable {
+
+    private final Socket clientSocket;
+    private final Gson gson = new Gson();
+    private Long currentUid = null;
+    private PrintWriter out;
+
+    // Handler实例
+    private final LoginHandler loginHandler = new LoginHandler();
+    private final RegisterHandler registerHandler = new RegisterHandler();
+    private final UserInfoHandler userInfoHandler = new UserInfoHandler();
+    private final FriendHandler friendHandler = new FriendHandler();
+    private final ChatHandler chatHandler = new ChatHandler();
+    private final ChatGroupHandler chatGroupHandler = new ChatGroupHandler();
+    private final GroupHandler groupHandler = new GroupHandler();
+    private final ChatHistoryHandler chatHistoryHandler = new ChatHistoryHandler();
+    private final ResetPasswordHandler resetPasswordHandler = new ResetPasswordHandler();
+    private final SettingHandler settingHandler = new SettingHandler();
+    private final FriendProfileHandler friendProfileHandler = new FriendProfileHandler();
+    private final GroupDetailHandler groupDetailHandler = new GroupDetailHandler();
+    private final GroupMemberHandler groupMemberHandler = new GroupMemberHandler();
+    private final FileHandler fileHandler = new FileHandler();
+
+    public ClientHandler(Socket socket) {
+        this.clientSocket = socket;
+    }
+
+    @Override
+    public void run() {
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+             PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true)) {
+
+            this.out = writer;
+            System.out.println("New client connected: " + clientSocket.getInetAddress().getHostAddress());
+
+            String line;
+            while ((line = in.readLine()) != null) {
+                System.out.println("[HANDLER] Received from client: " + line);
+
+                try {
+                    JsonObject root = gson.fromJson(line, JsonObject.class);
+                    if (root == null || !root.has("type")) {
+                        continue;
+                    }
+                    String type = root.get("type").getAsString();
+
+                    switch (type) {
+                        case MessageType.LOGIN_REQUEST -> {
+                            LoginRequest loginReq = gson.fromJson(line, LoginRequest.class);
+                            handleLogin(loginReq);
+                        }
+                        case MessageType.REGISTER_REQUEST -> {
+                            RegisterRequest registerReq = gson.fromJson(line, RegisterRequest.class);
+                            handleRegister(registerReq);
+                        }
+                        case MessageType.USER_INFO_REQUEST -> {
+                            if (currentUid == null) break;
+                            UserInfoRequest userInfoReq = gson.fromJson(line, UserInfoRequest.class);
+                            handleUserInfo(userInfoReq);
+                        }
+                        case MessageType.UPDATE_PROFILE_REQUEST -> {
+                            if (currentUid == null) break;
+                            UpdateProfileRequest updateProfileReq = gson.fromJson(line, UpdateProfileRequest.class);
+                            handleUpdateProfile(updateProfileReq);
+                        }
+                        case MessageType.FRIEND_ADD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendAddRequest friendReq = gson.fromJson(line, FriendAddRequest.class);
+                            handleFriendAdd(friendReq);
+                        }
+                        case MessageType.FRIEND_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendListRequest friendListReq = gson.fromJson(line, FriendListRequest.class);
+                            handleFriendList(friendListReq);
+                        }
+                        case MessageType.GROUP_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupListRequest groupListReq = gson.fromJson(line, GroupListRequest.class);
+                            handleGroupList(groupListReq);
+                        }
+                        case MessageType.CHAT_PRIVATE_SEND -> {
+                            if (currentUid == null) break;
+                            ChatPrivateSend cps = gson.fromJson(line, ChatPrivateSend.class);
+                            cps.setFromUserId(currentUid);
+                            handlePrivateChat(cps);
+                        }
+                        case MessageType.CHAT_GROUP_SEND -> {
+                            if (currentUid == null) break;
+                            ChatGroupSend cgs = gson.fromJson(line, ChatGroupSend.class);
+                            cgs.setFromUserId(currentUid);
+                            handleGroupChat(cgs);
+                        }
+                        case MessageType.CHAT_HISTORY_REQUEST -> {
+                            if (currentUid == null) break;
+                            ChatHistoryRequest historyReq = gson.fromJson(line, ChatHistoryRequest.class);
+                            handleChatHistory(historyReq);
+                        }
+                        case MessageType.RESET_PASSWORD_REQUEST -> {
+                            ResetPasswordRequest resetReq = gson.fromJson(line, ResetPasswordRequest.class);
+                            handleResetPassword(resetReq);
+                        }
+                        case MessageType.FRIEND_REQUEST_LIST_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendRequestListRequest friendReqListReq = gson.fromJson(line, FriendRequestListRequest.class);
+                            handleFriendRequestList(friendReqListReq);
+                        }
+                        case MessageType.FRIEND_REQUEST_RESPONSE -> {
+                            if (currentUid == null) break;
+                            FriendRequestResponse friendReqResp = gson.fromJson(line, FriendRequestResponse.class);
+                            handleFriendRequestResponse(friendReqResp);
+                        }
+                        case MessageType.GROUP_CREATE_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupCreateRequest groupCreateReq = gson.fromJson(line, GroupCreateRequest.class);
+                            handleGroupCreate(groupCreateReq);
+                        }
+                        case MessageType.CHANGE_PASSWORD_REQUEST -> {
+                            if (currentUid == null) break;
+                            ChangePasswordRequest changePwdReq = gson.fromJson(line, ChangePasswordRequest.class);
+                            handleChangePassword(changePwdReq);
+                        }
+                        case MessageType.FRIEND_DETAIL_REQUEST -> {
+                            if (currentUid == null) break;
+                            FriendDetailRequest friendDetailReq = gson.fromJson(line, FriendDetailRequest.class);
+                            handleFriendDetail(friendDetailReq);
+                        }
+                        case MessageType.DELETE_FRIEND_REQUEST -> {
+                            if (currentUid == null) break;
+                            DeleteFriendRequest deleteFriendReq = gson.fromJson(line, DeleteFriendRequest.class);
+                            handleDeleteFriend(deleteFriendReq);
+                        }
+                        case MessageType.GROUP_DETAIL_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupDetailRequest groupDetailReq = gson.fromJson(line, GroupDetailRequest.class);
+                            handleGroupDetail(groupDetailReq);
+                        }
+                        case MessageType.EXIT_GROUP_REQUEST -> {
+                            if (currentUid == null) break;
+                            ExitGroupRequest exitGroupReq = gson.fromJson(line, ExitGroupRequest.class);
+                            handleExitGroup(exitGroupReq);
+                        }
+                        case MessageType.GROUP_ADD_MEMBER_REQUEST -> {
+                            if (currentUid == null) break;
+                            GroupAddMemberRequest groupAddMemberReq = gson.fromJson(line, GroupAddMemberRequest.class);
+                            handleGroupAddMember(groupAddMemberReq);
+                        }
+                        case MessageType.FILE_UPLOAD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FileUploadRequest fileUploadReq = gson.fromJson(line, FileUploadRequest.class);
+                            handleFileUpload(fileUploadReq);
+                        }
+                        case MessageType.FILE_DOWNLOAD_REQUEST -> {
+                            if (currentUid == null) break;
+                            FileDownloadRequest fileDownloadReq = gson.fromJson(line, FileDownloadRequest.class);
+                            handleFileDownload(fileDownloadReq);
+                        }
+                        case MessageType.FILE_PRIVATE_SEND -> {
+                            if (currentUid == null) break;
+                            FilePrivateSend filePrivateSend = gson.fromJson(line, FilePrivateSend.class);
+                            handleFilePrivateSend(filePrivateSend);
+                        }
+                        case MessageType.FILE_GROUP_SEND -> {
+                            if (currentUid == null) break;
+                            FileGroupSend fileGroupSend = gson.fromJson(line, FileGroupSend.class);
+                            handleFileGroupSend(fileGroupSend);
+                        }
+                        default -> System.out.println("[WARN] Unsupported type: " + type);
+                    }
+                } catch (JsonSyntaxException e) {
+                    fallbackLog(line);
+                } catch (Exception e) {
+                    System.err.println("Handler error: " + e.getMessage());
+                    e.printStackTrace();
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            System.out.println("[INFO] 客户端断开: " + clientSocket.getInetAddress() + " - " + e.getMessage());
+        } finally {
+            cleanup();
+        }
+    }
+
+    private void handleLogin(LoginRequest loginRequest) {
+        LoginResponse response = loginHandler.handle(loginRequest);
+        if (response.isSuccess() && response.getUid() != null) {
+            try {
+                currentUid = Long.parseLong(response.getUid());
+                OnlineUserManager.addUser(currentUid, out);
+                System.out.println("用户UID " + currentUid + " 登录成功，保持连接...");
+            } catch (NumberFormatException e) {
+                System.err.println("[LOGIN] UID格式错误: " + response.getUid());
+            }
+        }
+        sendJson(response);
+    }
+
+    private void handleRegister(RegisterRequest registerRequest) {
+        RegisterResponse response = registerHandler.handle(registerRequest);
+        sendJson(response);
+    }
+
+    private void handleUserInfo(UserInfoRequest userInfoRequest) {
+        // 如果请求中没有指定userId，使用当前登录用户的UID
+        if (userInfoRequest.getUserId() == null) {
+            userInfoRequest.setUserId(currentUid);
+        }
+        UserInfoResponse response = userInfoHandler.handle(userInfoRequest);
+        sendJson(response);
+    }
+
+    private void handleFileUpload(FileUploadRequest request) {
+        FileUploadResponse response = fileHandler.handleFileUpload(request);
+        sendJson(response);
+    }
+
+    private void handleFileDownload(FileDownloadRequest request) {
+        FileDownloadResponse response = fileHandler.handleFileDownload(request);
+        sendJson(response);
+    }
+
+    private void handleFilePrivateSend(FilePrivateSend message) {
+        boolean success = fileHandler.handleFilePrivateSend(message);
+        if (!success) {
+            System.out.println("[FILE] 私聊文件消息处理失败");
+        }
+    }
+
+    private void handleFileGroupSend(FileGroupSend message) {
+        boolean success = fileHandler.handleFileGroupSend(message);
+        if (!success) {
+            System.out.println("[FILE] 群聊文件消息处理失败");
+        }
+    }
+    private void handleUpdateProfile(UpdateProfileRequest updateProfileRequest) {
+        UpdateProfileResponse response = userInfoHandler.handleUpdateProfile(updateProfileRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleFriendAdd(FriendAddRequest friendRequest) {
+        FriendAddResponse response = friendHandler.handleFriendAdd(friendRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleFriendList(FriendListRequest friendListRequest) {
+        FriendListResponse response = friendHandler.handleFriendList(friendListRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleGroupDetail(GroupDetailRequest request) {
+        GroupDetailResponse response = groupDetailHandler.handleGroupDetail(request);
+        sendJson(response);
+    }
+
+    private void handleExitGroup(ExitGroupRequest request) {
+        ExitGroupResponse response = groupDetailHandler.handleExitGroup(request);
+        sendJson(response);
+    }
+
+    private void handleFriendRequestList(FriendRequestListRequest request) {
+        FriendRequestListResponse response = friendHandler.handleFriendRequestList(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleFriendRequestResponse(FriendRequestResponse request) {
+        FriendAddResponse response = friendHandler.handleFriendRequestResponse(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleGroupList(GroupListRequest groupListRequest) {
+        GroupListResponse response = groupHandler.handleGroupList(groupListRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleGroupCreate(GroupCreateRequest request) {
+        GroupCreateResponse response = groupHandler.handleGroupCreate(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleDeleteFriend(DeleteFriendRequest request) {
+        DeleteFriendResponse response = friendProfileHandler.handleDeleteFriend(request);
+        sendJson(response);
+    }
+
+    private void handlePrivateChat(ChatPrivateSend chatRequest) {
+        boolean success = chatHandler.handle(chatRequest);
+        if (!success) {
+            System.out.println("[CHAT] 私聊消息处理失败");
+        }
+    }
+
+    private void handleGroupChat(ChatGroupSend chatRequest) {
+        boolean success = chatGroupHandler.handle(chatRequest);
+        if (!success) {
+            System.out.println("[GROUP_CHAT] 群聊消息处理失败");
+        }
+    }
+
+    private void handleGroupAddMember(GroupAddMemberRequest request) {
+        GroupAddMemberResponse response = groupMemberHandler.handleAddMember(request, currentUid);
+        sendJson(response);
+    }
+
+    private void handleChatHistory(ChatHistoryRequest historyRequest) {
+        ChatHistoryResponse response = chatHistoryHandler.handle(historyRequest, currentUid);
+        sendJson(response);
+    }
+
+    private void handleResetPassword(ResetPasswordRequest resetRequest) {
+        ResetPasswordResponse response = resetPasswordHandler.handle(resetRequest);
+        sendJson(response);
+
+        // 密码重置后关闭连接（安全考虑）
+        if (response.isSuccess()) {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                System.out.println("[INFO] 重置密码后关闭连接: " + e.getMessage());
+            }
+        }
+    }
+
+    private void handleChangePassword(ChangePasswordRequest request) {
+        ChangePasswordResponse response = settingHandler.handleChangePassword(request, currentUid);
+        sendJson(response);
+
+        // 密码修改成功后强制用户重新登录（安全考虑）
+        if (response.isSuccess()) {
+            try {
+                System.out.println("[INFO] 用户 " + currentUid + " 修改密码成功，强制重新登录");
+
+                // 从在线用户列表中移除
+                OnlineUserManager.removeUser(currentUid);
+
+                // 关闭连接
+                if (!clientSocket.isClosed()) {
+                    clientSocket.close();
+                }
+            } catch (IOException e) {
+                System.out.println("[INFO] 关闭连接时发生错误: " + e.getMessage());
+            }
+        }
+    }
+
+    private void handleFriendDetail(FriendDetailRequest request) {
+        FriendDetailResponse response = friendProfileHandler.handleFriendDetail(request);
+        sendJson(response);
+    }
+
+    private void sendJson(Object obj) {
+        if (out != null && !out.checkError()) {
+            out.println(gson.toJson(obj));
+        }
+    }
+
+    private void fallbackLog(String line) {
+        try {
+            Pattern pu = Pattern.compile("\"username\"\\s*:\\s*\"([^\"]*)\"");
+            Matcher mu = pu.matcher(line);
+            String u = mu.find() ? mu.group(1) : "?";
+            System.out.println("[FALLBACK] 用户 " + u + " 登录失败(JSON无效)");
+        } catch (Throwable ignored) {}
+    }
+
+    private void cleanup() {
+        if (currentUid != null) {
+            OnlineUserManager.removeUser(currentUid);
+            System.out.println("[ONLINE] 用户UID " + currentUid + " 已下线");
+        }
+        try {
+            if (!clientSocket.isClosed()) {
+                clientSocket.close();
+            }
+        } catch (IOException e) {
+            System.err.println("Error closing socket: " + e.getMessage());
+        }
+    }
+}
